@@ -1,1 +1,1 @@
-extern void child_action(char **proc);
+extern void child_main(char **proc);

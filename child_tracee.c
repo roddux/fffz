@@ -1,3 +1,4 @@
+#define __SRCFILE__ "child_tracee"
 #include <inttypes.h>
 #include <signal.h>
 #include <stdio.h>       // printf
@@ -7,7 +8,7 @@
 
 #include "util.h"  // CHECK and LOG
 
-void child_action(char **proc) {
+void child_main(char **proc) {
     int ret;
     LOG("calling PTRACE_TRACEME '%s'\n", proc[0]);
     ret = ptrace(PTRACE_TRACEME, NULL, NULL, NULL);

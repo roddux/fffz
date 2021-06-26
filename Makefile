@@ -10,7 +10,8 @@ release: clean
 release: DEBUG_RELEASE_FLAGS=-O3
 release: all
 
-fffz: scan.o parent_tracer.o child_tracee.o fffz.o syscalls.o
+mutator.o: CFLAGS+=-Wno-incompatible-pointer-types
+fffz: scan.o parent_tracer.o child_tracee.o fffz.o syscalls.o mutator.o snapshot.o memory.o
 target: target.o
 all: fffz target
 

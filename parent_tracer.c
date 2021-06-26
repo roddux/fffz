@@ -1,3 +1,4 @@
+#define __SRCFILE__ "parent_tracer"
 #include <inttypes.h>
 #include <signal.h>
 
@@ -5,6 +6,8 @@
 #include <sys/ptrace.h>    // this needs to come first, clang-format breaks it
 #include <linux/ptrace.h>  // ptrace_syscall_info
 // clang-format on
+
+#include <byteswap.h>
 
 #include <sys/types.h>
 #include <sys/user.h>
@@ -17,22 +20,24 @@
 #include <string.h>    // strncmp
 #include <sys/stat.h>  // stat
 #include <sys/wait.h>
-#include <unistd.h>  // readlink
+#include <unistd.h>   // readlink
+#include <syscall.h>  // syscall defines
 
 #include "util.h"  // CHECK and LOG
+#include "scan.h"  // /proc/X/maps stuff
+#include "mutator.h"
+#include "snapshot.h"
+#include "memory.h"
 
 extern char syscall_names[][23];
 extern char signal_names[][14];
 
-#define LLEN 4
+#define LLEN 6
 char bad_paths[LLEN][7] = {
-    "/dev\0\0\0",
-    "/etc\0\0\0",
-    "/usr\0\0\0",
-    "pipe:[\0",
+    "/dev\0\0\0", "/etc\0\0\0", "/usr\0\0\0",
+    "/sys\0\0\0", "/proc\0\0",  "pipe:[\0",
 };
 
-#define NO_REASON -1
 #define REASON_ENTER 0
 #define REASON_EXIT 1
 #define PATH_ON_BLACKLIST 1
@@ -47,77 +52,122 @@ int is_path_blacklisted(char *path) {
     return PATH_NOT_ON_BLACKLIST;
 }
 
-#define MY_MAX_PATH 4096
-void check_fds(pid_t target_pid) {
-    char tmp[MY_MAX_PATH];
-    char fd_path[MY_MAX_PATH];
-
-    // check each of the child process's filedescriptors
-    sprintf((char *)&tmp, "/proc/%d/fd/", target_pid);
-    DIR *fd_dir = opendir(tmp);
-    struct dirent *fd;
-    while ((fd = readdir(fd_dir)) != NULL) {
-        if (strncmp(fd->d_name, ".", 2) == 0 ||
-            strncmp(fd->d_name, "..", 3) == 0)
-            continue;  // skip parent/current directory entries
-
-        sprintf((char *)&tmp, "/proc/%d/fd/%s", target_pid, fd->d_name);
-        int ret = readlink(tmp, (char *)&fd_path, MY_MAX_PATH * sizeof(char));
-        CHECK(ret == -1, "readlink failed");
-
-        if (ret == -1) continue;  // skip if the filedescriptor doesn't exist
-
-        fd_path[ret] = 0;  // zero-terminate our fd_path
-
-        if (is_path_blacklisted(fd_path) == PATH_ON_BLACKLIST)
-            continue;  // skip if bad path
-
-        // we have a potential. now we check if the filename matches
-        // what was passed to the program in argv
-        LOG("got path: %s\n", fd_path);
-        struct stat buf;
-        ret = stat(fd_path, &buf);
-        CHECK(ret == -1, "stat failed");
-        LOG("got filesize: %lu\n", buf.st_size);
-    }
-}
-
 // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
 //   kernel: %rdi, %rsi, %rdx, %r10, %r8 and %r9
-void handle_syscall(uint64_t syscall, struct user_regs_struct *regs,
-                    pid_t child_pid, int REASON) {
-    switch (REASON) {
-        case REASON_ENTER:
-            LOG("ENTERING syscall '%s'\n", syscall_names[syscall]);
-            break;
-        case REASON_EXIT:
-            LOG(" EXITING syscall '%s'\n", syscall_names[syscall]);
-            break;
-        default:
-            LOG(" ??????? syscall '%s'\n", syscall_names[syscall]);
+uint64_t last_syscall = -1;
+char *file_name = NULL;
+uint64_t file_fd = 0;
+uintptr_t buffer_addr;
+void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
+                    int reason) {
+    char argz[512];
+    char tmp_path[256];
+    if (reason == REASON_ENTER) {
+        last_syscall = syzinfo->entry.nr;
+        switch (last_syscall) {
+            case __NR_execve:
+                break;
+            case __NR_exit:
+            case __NR_exit_group:
+                LOG("caught exit! restoring checkpoint\n");
+                restore_snapshot(child_pid);
+                getchar();
+                break;
+            case __NR_openat:
+                // if we're in the ENTRY, read filepath
+                // filepath addr is at arg1/rsi, so PTRACE_PEEKTEXT
+                // entry.args[1]
+
+                // TODO: use read_memory to do this faster. use scan.c
+                // functions to make sure the read doesn't spill into an
+                // unmapped/non-read area
+                read_from_memory(child_pid, (uint8_t *)&tmp_path,
+                                 syzinfo->entry.args[1], 256);
+                tmp_path[strnlen(tmp_path, 255)] = 0;
+                LOG("got '%s'\n", tmp_path);
+                if (is_path_blacklisted(tmp_path) == PATH_NOT_ON_BLACKLIST) {
+                    file_name = strdup(tmp_path);
+                    LOG("got likely file: '%s'\n", file_name);
+                }
+                // memset(&tmp_path, 0, 4096);
+                sprintf((char *)&argz,
+                        "%s(%llx, %llx, %llx, %llx, %llx, %llx)\n",
+                        syscall_names[syzinfo->entry.nr],
+                        syzinfo->entry.args[0], syzinfo->entry.args[1],
+                        syzinfo->entry.args[2], syzinfo->entry.args[3],
+                        syzinfo->entry.args[4], syzinfo->entry.args[5]);
+                LOG("%s", argz);
+                break;
+            case __NR_read:
+                sprintf((char *)&argz,
+                        "%s(%llx, %llx, %llx, %llx, %llx, %llx)\n",
+                        syscall_names[syzinfo->entry.nr],
+                        syzinfo->entry.args[0], syzinfo->entry.args[1],
+                        syzinfo->entry.args[2], syzinfo->entry.args[3],
+                        syzinfo->entry.args[4], syzinfo->entry.args[5]);
+                LOG("%s", argz);
+                if (syzinfo->entry.args[0] == file_fd) {
+                    buffer_addr = syzinfo->entry.args[1];
+                    LOG("caught read on fd %d (%s) to buffer at addr %p\n",
+                        (int)file_fd, file_name, (void *)buffer_addr);
+                }
+                break;
+                /*
+                TODO:
+                - read the file into memory ourselves
+                - emulate read calls with sys_emu
+
+                otherwise we need to peek/poke for all the bytes :(
+                ... or we use readv/writev? hmm.
+                */
+
+            case __NR_close:
+                LOG("close() called on fd %llu\n", syzinfo->entry.args[0]);
+                file_name = NULL;
+                break;
+        }
     }
-#if 0
-    switch (syscall) {
-        case __NR_execve:  // execve, 59
-            if (REASON == REASON_ENTER) {
-                LOG("entering syscall: execve(...)\n");
-                return;
+    if (reason == REASON_EXIT) {
+        if (last_syscall == __NR_openat) {
+            if (file_name != NULL) {
+                file_fd = syzinfo->exit.rval;
+                LOG("got path '%s' with fd %d\n", file_name, (int)file_fd);
             }
-            LOG("exiting syscall: execve(...)\n");
-            break;
-        case __NR_openat:  // openat, 257
-            if (REASON == REASON_ENTER) {
-                LOG("entering syscall: openat(...)\n");
-                return;
+        }
+        if (last_syscall == __NR_read) {
+            uint64_t rval = syzinfo->exit.rval;
+            LOG("last syzcall was read, which returned %" PRIu64 "\n", rval);
+            if (file_fd != 0 && file_name != NULL) {
+                if (rval == 0) {  // finished reading input file - checkpoint
+                    LOG("taking process snapshot\n");
+                    save_snapshot(child_pid);
+                    dump_snapshot_info();
+                    return;
+                }
+                LOG("ok\n");
+                LOG("corrupting '%s'\n", file_name);
+
+                /*
+                 */
+
+                srand(child_pid);
+                // uint16_t junk = rand();
+                uint64_t offst = rand() % rval;
+                uintptr_t p = (uint64_t)syzinfo->entry.args[1] + offst;
+                uint8_t *junk = malloc(rval * sizeof(uint8_t));
+                read_from_memory(child_pid, junk, p, rval - offst);
+                mutate(junk, rval - offst, 10);
+                write_to_memory(child_pid, (uint8_t *)junk, p, rval - offst);
+                // int ret =
+                //    ptrace(PTRACE_POKETEXT, child_pid, (uint8_t *)p, junk);
+                // CHECK(ret == -1, "failed to poketext");
+            } else {
+                LOG("but file_fd == NULL\n");
             }
-            LOG("exiting syscall: openat(...)\n");
-            check_fds(child_pid);
-            break;
+        }
     }
-#endif
 }
 
-int LAST_SYSCALL_REASON = NO_REASON;
 void parent_action(pid_t child_pid) {
     int ret, status, is_first_stop = 1;
 
@@ -129,7 +179,7 @@ void parent_action(pid_t child_pid) {
             break;
         }
         if (WIFSIGNALED(status)) {
-            LOG("WIFSIGNALED!\n");
+            fprintf(stderr, "!!! WIFSIGNALED !!!\n");
         }
         if (WIFSTOPPED(status)) {
             if (is_first_stop) {
@@ -150,53 +200,32 @@ void parent_action(pid_t child_pid) {
         if ((status >> 8) != (SIGTRAP | 0x80)) {  // $ man ptrace
             // resume until next syscall
             ret = ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
-            CHECK(ret == -1, "failed to ptrace_cont");
+            CHECK(ret == -1, "failed to ptrace_syscall");
             continue;
         }
 
+        //        LOG("calling getsyscallinfo\n");
         struct ptrace_syscall_info syzinfo;
         ret = ptrace(PTRACE_GET_SYSCALL_INFO, child_pid,
                      sizeof(struct ptrace_syscall_info), &syzinfo);
         CHECK(ret == -1, "could not PTRACE_GET_SYSCALL_INFO");
+
         switch (syzinfo.op) {
             case PTRACE_SYSCALL_INFO_ENTRY:
-                LOG("syscall->op: INFO_ENTRY\n");
+                //              LOG("info_entry\n");
+                handle_syscall(&syzinfo, child_pid, REASON_ENTER);
                 break;
             case PTRACE_SYSCALL_INFO_EXIT:
-                LOG("syscall->op: INFO_EXIT\n");
+                //            LOG("info_exit\n");
+                handle_syscall(&syzinfo, child_pid, REASON_EXIT);
                 break;
             case PTRACE_SYSCALL_INFO_NONE:
                 LOG("syscall->op: none\n");
                 break;
         }
 
-        struct user_regs_struct regs;
-        ret = ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-        CHECK(ret == -1, "could not PTRACE_GETREGS");
-
-        // Stopped due to syscall?
-        uint64_t syscall = regs.orig_rax;
-        switch (LAST_SYSCALL_REASON) {
-            case NO_REASON:  // if we don't have a reason yet, or the last call
-                             // was an EXIT, then this must be an enter
-                LOG("first syscall, setting LAST_SYSCALL_REASON to "
-                    "REASON_ENTER\n");
-                // fall through
-            case REASON_EXIT:
-                handle_syscall(syscall, &regs, child_pid, REASON_ENTER);
-                LAST_SYSCALL_REASON = REASON_ENTER;
-                break;
-            case REASON_ENTER:  // if last reason was ENTER, this is
-                                // corresponding EXIT
-                handle_syscall(syscall, &regs, child_pid, REASON_EXIT);
-                LAST_SYSCALL_REASON = REASON_EXIT;
-                break;
-            default:
-                LOG("Syscall stopped with weird reason!\n");
-        }
-
-        // Resume until next syscall
+        // resume until next syscall
         ret = ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
-        CHECK(ret == -1, "failed to ptrace_cont");
+        CHECK(ret == -1, "failed to ptrace_syscall");
     }
 }
