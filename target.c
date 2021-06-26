@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     puts("------: file data :------");
     int c;
     FILE *stream = fdopen(fd, "r");
-    while ( (c = fgetc(stream)) != EOF ) {
+    while ((c = fgetc(stream)) != EOF) {
         putchar(c);
     }
     return 0;

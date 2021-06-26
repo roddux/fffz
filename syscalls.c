@@ -439,3 +439,12 @@ char syscall_names[][23] = {"read",
                             "pidfd_getfd",
                             "faccessat2",
                             "process_madvise"};
+
+char signal_names[][14] = {
+    "INVALID", "SIGHUP",         "SIGINT",  "SIGQUIT",  "SIGILL",
+    "SIGTRAP", "SIGABRT/SIGIOT", "SIGBUS",  "SIGFPE",   "SIGKILL",
+    "SIGUSR1", "SIGSEGV",        "SIGUSR2", "SIGPIPE",  "SIGALRM",
+    "SIGTERM", "SIGSTKFLT",      "SIGCHLD", "SIGCONT",  "SIGSTOP",
+    "SIGTSTP", "SIGTTIN",        "SIGTTOU", "SIGURG",   "SIGXCPU",
+    "SIGXFSZ", "SIGVTALRM",      "SIGPROF", "SIGWINCH", "SIGPOLL/SIGIO",
+    "SIGPWR",  "SIGSYS"};

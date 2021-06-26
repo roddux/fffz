@@ -1,11 +1,11 @@
 #include "scan.h"
 
-#include <fcntl.h>     // O_RDONLY
-#include <inttypes.h>  // PRIx64
-#include <stdio.h>     // printf
-#include <stdlib.h>    // malloc, realloc
-#include <string.h>    // strchr, strtok
-#include <unistd.h>    // pid
+#include <fcntl.h>      // O_RDONLY
+#include <inttypes.h>   // PRIx64
+#include <stdio.h>      // printf
+#include <stdlib.h>     // malloc, realloc
+#include <string.h>     // strchr, strtok
+#include <sys/types.h>  // pid
 
 // fscanf doesn't deal with optional fields; if we scan a line without a path,
 // it breaks -- which is why we use strtok

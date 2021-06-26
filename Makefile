@@ -3,14 +3,14 @@
 
 DEBUG_RELEASE_FLAGS=-Og -ggdb -D_GNU_SOURCE
 CC=gcc
-CFLAGS=-Wall -Wextra -pedantic -std=gnu17 -Werror $(DEBUG_RELEASE_FLAGS)
-#CFLAGS=-Wall -Wextra -pedantic $(DEBUG_RELEASE_FLAGS)
+#CFLAGS=-D_GNU_SOURCE -Wall -Wextra -pedantic -std=c17 -march=native -Werror $(DEBUG_RELEASE_FLAGS)
+CFLAGS=-D_GNU_SOURCE -Wall -Wextra -pedantic -std=c17 -march=native $(DEBUG_RELEASE_FLAGS)
 
-release: DEBUG_RELEASE_FLAGS=-O2
-release: clean 
+release: clean
+release: DEBUG_RELEASE_FLAGS=-O3
 release: all
 
-fffz: scan.o parent_tracer.o child_tracee.o fffz.o
+fffz: scan.o parent_tracer.o child_tracee.o fffz.o syscalls.o
 target: target.o
 all: fffz target
 
@@ -18,7 +18,7 @@ format:
 	find . \( -name "*.h" -or -name "*.c" \) -exec clang-format -i {} -style="{BasedOnStyle: Google, IndentWidth: 4}" \;
 
 run:
-	./fffz ./target target.o
+	./fffz ./target util.h
 
 clean:
 	rm -f ./*.o ./fffz ./target

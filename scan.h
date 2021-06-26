@@ -1,5 +1,5 @@
-#include <inttypes.h>  // uintx_t
-#include <unistd.h>    // size_t, pid_t
+#include <inttypes.h>   // uintx_t
+#include <sys/types.h>  // pid
 
 typedef struct map_entry {
     uint64_t start;
