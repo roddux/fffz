@@ -6,35 +6,44 @@ with decent real-world performance.
 ## Target usage
 Just add `fffz` to the start of any command that takes a file as input.
 ```sh
-$ ./fffz unzip /home/user/file.zip
-$ ./fffz ffmpeg -i /home/user/input.avi /home/user/out.ogg
-$ ./fffz convert /home/user/input.jpg -resize 50% /home/user/out.png
-$ ./fffz objdump /bin/ls
+$ ./fffz unzip ./file.zip
+$ ./fffz ffmpeg -i ./input.avi /tmp/out.ogg
+$ ./fffz convert ./input.jpg -resize 50% /tmp/out.png
+$ ./fffz objdump -x /bin/ls
 ```
 
 ## Explanation
-We use `ptrace` to hook `read*()` syscalls. We intercept reads based on the
-path of the given file descriptor by applying some basic heuristics to
-determine if it's the correct file.
+We use `ptrace` to hook the `read()` and `openat()` syscalls. We intercept
+reads based on the path of the given file descriptor by applying some basic
+heuristics to determine if it's the correct file. We hook openat to keep track
+of the file paths for each file descriptor.
 
 The file descriptor heuristic checks the arguments to fffz to see which file
-the program is supposed to be operating on. i.e., we read the argument list and
+the target is supposed to be operating on. i.e., we read the argument list and
 assume it's one of those. We skip paths like `/etc/` and `/lib/` and assume
-that the path that part-matches one of the command-line arguments is the input.
+that the path that matches one of the command-line arguments is the input.
 
-When we have determined that the last `read()` syscall has been performed _(by
-calling `fstat()` on the file descriptor ourselves to determine filesize)_, we
-take a snapshot of the process using `process_vm_readv()` using memory map
-information from `/proc/pid/maps`.
+When we have determined that the last `read()` has been performed on the input
+file _(by calling `fstat()` on the file descriptor ourselves to determine
+filesize)_, we take a snapshot of the process using `process_vm_readv()` using
+memory map information from `/proc/pid/maps`. We also save file descriptor
+offsets this way, by using an injected libary and storing the offsets in
+memory.
 
-We restore the snapshot on `exit`/`exit_group` syscalls.
+We restore the snapshot on `exit()`/`exit_group()` syscalls by using
+`process_vm_writev()`, and forcing the target program to call our injected
+`restore_offsets()` function in the imposer library.
 
 # Files
 ```text
 ./fffz.c          : program entrypoint; fork and call parent/child logic
-./parent_tracer.c : tracing the child; monitoring signals + snapshotting
+./parent_tracer.c : (core) trace the child, check signals and make snapshots
 ./child_tracee.c  : exev's the target
 ./scan.c          : logic to read and parse `/proc/pid/maps`
+./snapshot.c      : create and restore a process snapshot
+./mutator.c       : basic mutators
+./target.c        : example fuzzing target
+./imposer.co      : injected library providing hooks to help with snapshots
 ```
 
 # TODO
@@ -45,25 +54,21 @@ MVP:
 [X] - parse memory map information from /proc
 [X]	- intercept read* calls and check path of file descriptor
 [X]	- basic mutation of the buffer in-memory
-[ ] - implement is-it-time-to-snapshot-yet logic
-[ ]	- snapshot + restore mechanism using process_vm_readv/writev
+[X] - implement super basic is-it-time-to-snapshot-yet logic
+[X]	- snapshot + restore mechanism using process_vm_readv/writev
+[X] - improve/fix snapshot logic to remove overfit to dummy target
+[X] - injected library to hook lseek and restore filedes offsets
+[>] - call library to restore filedes offsets
 
 FUTURE:
-[ ] - hook fstat so we can provide process a buffer of arbitrary size
+[ ] - batch process_vm_readv/process_vm_writev calls
+[ ] - modify proc/pid/map scanner to only return readable/writeable pages
+[ ] - modify snapshotting to only restore dirty pages
 [ ] - collect edge/bb coverage information from target process
-[ ] - multi-threading
-[ ] - handle some syscalls (read) with PTRACE_SYSEMU for fewer context switches
-                
-MVP:
-                - use process_vm_readv to read the buffer to our process
-                - mutate said buffer
-                - write it back
-                FUTURE:
-                - emulate the read() syscall with PTRACE_SYSEMU
-                - mutate the buffer and write back
-
-                which is actually gonna be faster, though?
+[ ] - handle read in userspace with PTRACE_SYSEMU for fewer context switches
+[ ] - hook fstat so we can provide process a buffer of arbitrary size
+[ ] - automagic multi-threading (?)
 ```
 
 # Trophy case
-- CVE-2020-0000 : Hopeful much???
+- CVE-2021-0000 : Hopeful much???

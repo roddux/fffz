@@ -27,6 +27,7 @@ void print_bits(uint8_t *buf, uint64_t num_bits) {
 }
 
 void bitflip(uint8_t *buf, uint64_t size) {
+    LOG("a single bitflip!\n");
     uint64_t offset = (rand() * 1024) % size;
     uint8_t flip = 0;
     flip = 1 << (rand() % 7);
@@ -34,11 +35,13 @@ void bitflip(uint8_t *buf, uint64_t size) {
 }
 
 void byteflip(uint8_t *buf, uint64_t size) {
+    LOG("a single byteflip!\n");
     uint64_t offset = (rand() * 1024) % size;
     buf[offset] = ~buf[offset];
 }
 
 void arith(uint8_t *buf, uint64_t size) {
+    LOG("a single arithmetic!\n");
     uint64_t offset = (rand() * 1024) % size;
     // "[..] -35 to +35. Past these bounds, yields drop dramatically [..]"
     int8_t adjust = rand() % 36;

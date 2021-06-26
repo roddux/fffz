@@ -15,3 +15,5 @@ typedef struct map_list {
 } map_list;
 
 map_list *get_maps_for_pid(pid_t pid);
+
+void print_list(map_list *lst);

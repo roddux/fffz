@@ -16,9 +16,12 @@
 extern char syscall_names[][23];
 extern char signal_names[][14];
 
+char **g_argv;
+int g_argc;
+
 void fork_and_trace(char **proc) {
     pid_t new_pid = fork();
-    CHECK(new_pid == -1, "failed to fork()");
+    CHECK(new_pid == -1, "failed to fork()\n");
     if (new_pid == 0) {  // child
         child_main(proc);
     } else {  // parent
@@ -32,6 +35,9 @@ int main(int argc, char **argv) {
                 argv[0]);
         exit(-1);
     }
+
+    g_argc = argc;
+    g_argv = argv;
 
     // Tell user what we're doing
     char prog[512];  // OH NO a static buffer, sue me

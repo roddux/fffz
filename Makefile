@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := all 
-.PHONY: clean run all debug
+.PHONY: clean run all debug imposer
 
 DEBUG_RELEASE_FLAGS=-Og -ggdb -D_GNU_SOURCE
 CC=gcc
@@ -10,9 +10,13 @@ release: clean
 release: DEBUG_RELEASE_FLAGS=-O3
 release: all
 
+imposer:
+	g++ -shared ./imposer.cpp -o imposer.so -ldl -fPIC
+
 mutator.o: CFLAGS+=-Wno-incompatible-pointer-types
 fffz: scan.o parent_tracer.o child_tracee.o fffz.o syscalls.o mutator.o snapshot.o memory.o
-target: target.o
+target: target.c
+	gcc $(CFLAGS) -ldl target.c -o target
 all: fffz target
 
 format:

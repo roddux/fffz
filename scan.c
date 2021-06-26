@@ -48,8 +48,9 @@ void print_list(map_list *lst) {
     map_entry *cur;
     for (size_t j = 0; j < lst->len; j++) {
         cur = entry_list[j];
-        printf("Entry %lu: '%s' from %" PRIx64 " to %" PRIx64 "\n", j,
-               cur->path, cur->start, cur->end);
+        printf("Entry %lu: '%s' with perms '%s' from %" PRIx64 " to %" PRIx64
+               "\n",
+               j, cur->path, cur->perms, cur->start, cur->end);
     }
 }
 
