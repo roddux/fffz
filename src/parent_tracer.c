@@ -214,9 +214,22 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             restore_snapshot(child_pid);
 			// restore filedes offsets by calling our injected function
 			LOG("restoing filedescriptor offsets\n");
-			extern "C" void restore_offsets() {
-			void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT, "restore_offsets");
-			PTRACE
+		
+            // extern "C" void restore_offsets()
+            // void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT, "restore_offsets");
+
+            // what we have to do here is get the child to call
+            // restore_offsets. restore_offsets has been injected via
+            // LD_PRELOAD trickery, so we need to get the child to call dlsym()
+            // to retrieve the address of restore_offsets, THEN call it ...
+
+            // or, we write down the offset of restore_offsets for a specific
+            // build of imposer.so and then check /proc/pid/maps looking for
+            // the library's base address, so we can calculate the function
+            // address that way. might be faster? requires cleaning up
+            // /proc/pid/maps code, though.
+
+            // using method-2.
 
             LOG("snapshot restored\n");
 

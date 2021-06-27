@@ -92,7 +92,14 @@ map_entry **parse_buffer_to_entry_list(uint8_t *buf, size_t entries) {
     return entry_list;
 }
 
-map_list *get_maps_for_pid(pid_t pid) {
+#define PERM_R   0b0000001
+#define PERM_W   0b0000010
+#define PERM_X   0b0000100
+#define PERM_RW  0b0000011
+#define PERM_RWX 0b0000111
+#define IS_READABLE(X)  (X->perms[0] == 'r')
+#define IS_WRITEABLE(X) (X->perms[1] == 'w')
+map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     // cat /proc/sys/kernel/pid_max == 4194304 == len(7)
     // 7 + len("/proc/") + len("/maps") + len("\0") == 19
     char map_path[19];
@@ -100,14 +107,57 @@ map_list *get_maps_for_pid(pid_t pid) {
     uint8_t *filebuf = open_and_read_file(map_path);
     size_t len = count_entries(filebuf);
     map_entry **entries = parse_buffer_to_entry_list(filebuf, len);
+
+    printf("**entries is at %p\n", entries);
+    printf("page_options is %d", PAGE_OPTIONS);
+
+    // filter list based on options
+    size_t used_len = 0;
+    map_entry **used_entries = malloc(sizeof(map_entry) * len);
+    printf("**used_entries is at %p\n", used_entries);
+    for(int c=0;c<len;c++) {
+        printf("checking item %d\n", c);
+        map_entry *cur, **new;
+        cur = entries[c];
+
+        if (PAGE_OPTIONS == PERM_W) {
+            if(IS_WRITEABLE(cur)) {
+                new = &used_entries[used_len++];
+                printf("writeable! new is %p, cur is %p\n", new, cur);
+                *new = cur;
+            }
+        } else if(PAGE_OPTIONS == PERM_R) {
+            if(IS_READABLE(cur)) {
+                new = &used_entries[used_len++];
+                printf("readable! new is %p, cur is %p\n", new, cur);
+                *new = cur;
+            }
+        } else if(PAGE_OPTIONS == PERM_RW) {
+            if(IS_READABLE(cur) && IS_WRITEABLE(cur)) {
+                new = &used_entries[used_len++];
+                printf("read+write! new is %p, cur is %p\n", new, cur);
+                *new = cur;
+            }
+        }
+    }
+    puts("boutta realloc");
+    used_entries = realloc(used_entries, sizeof(map_entry) * used_len);
+    puts("boutta free");
+    free(entries);
+
     map_list *ret = malloc(sizeof(map_list));
-    ret->entries = entries;
-    ret->len = len;
+    ret->entries = used_entries;
+    ret->len = used_len;
     return ret;
 }
 
-/*
-pid_t trg = 123;
-map_list *list = get_maps_for_pid(trg);
-print_list(list);
-*/
+#if 0
+int main() {
+    pid_t trg = getpid();
+    map_list *list = get_maps_for_pid(trg, PERM_W);
+    print_list(list);
+    free(list);
+    list = get_maps_for_pid(trg, PERM_R|PERM_W);
+    print_list(list);
+}
+#endif
