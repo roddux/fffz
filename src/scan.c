@@ -92,12 +92,12 @@ map_entry **parse_buffer_to_entry_list(uint8_t *buf, size_t entries) {
     return entry_list;
 }
 
-#define PERM_R   0b0000001
-#define PERM_W   0b0000010
-#define PERM_X   0b0000100
-#define PERM_RW  0b0000011
+#define PERM_R 0b0000001
+#define PERM_W 0b0000010
+#define PERM_X 0b0000100
+#define PERM_RW 0b0000011
 #define PERM_RWX 0b0000111
-#define IS_READABLE(X)  (X->perms[0] == 'r')
+#define IS_READABLE(X) (X->perms[0] == 'r')
 #define IS_WRITEABLE(X) (X->perms[1] == 'w')
 map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     // cat /proc/sys/kernel/pid_max == 4194304 == len(7)
@@ -115,25 +115,25 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     size_t used_len = 0;
     map_entry **used_entries = malloc(sizeof(map_entry) * len);
     printf("**used_entries is at %p\n", used_entries);
-    for(int c=0;c<len;c++) {
+    for (int c = 0; c < len; c++) {
         printf("checking item %d\n", c);
         map_entry *cur, **new;
         cur = entries[c];
 
         if (PAGE_OPTIONS == PERM_W) {
-            if(IS_WRITEABLE(cur)) {
+            if (IS_WRITEABLE(cur)) {
                 new = &used_entries[used_len++];
                 printf("writeable! new is %p, cur is %p\n", new, cur);
                 *new = cur;
             }
-        } else if(PAGE_OPTIONS == PERM_R) {
-            if(IS_READABLE(cur)) {
+        } else if (PAGE_OPTIONS == PERM_R) {
+            if (IS_READABLE(cur)) {
                 new = &used_entries[used_len++];
                 printf("readable! new is %p, cur is %p\n", new, cur);
                 *new = cur;
             }
-        } else if(PAGE_OPTIONS == PERM_RW) {
-            if(IS_READABLE(cur) && IS_WRITEABLE(cur)) {
+        } else if (PAGE_OPTIONS == PERM_RW) {
+            if (IS_READABLE(cur) && IS_WRITEABLE(cur)) {
                 new = &used_entries[used_len++];
                 printf("read+write! new is %p, cur is %p\n", new, cur);
                 *new = cur;

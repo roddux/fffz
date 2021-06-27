@@ -3,7 +3,7 @@
 mkdir gen || true
 (
     echo -n "uinptr_t offset = 0x";
-    readelf --dyn-syms imposer.so |\
+    readelf --dyn-syms bin/imposer.so |\
     awk '/restore_offsets/{print $2}'|\
     tr '\n' ';';
     echo;

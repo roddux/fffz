@@ -1,19 +1,21 @@
 .DEFAULT_GOAL := all 
-.PHONY: clean run all debug offset_header imposer
+.PHONY: clean run all debug offset_header imposer fffz target
 
 DEBUG_RELEASE_FLAGS=-Og -ggdb -D_GNU_SOURCE
 CC=gcc
-CFLAGS=-D_GNU_SOURCE -Wall -Wextra -pedantic -std=c17 -march=native $(DEBUG_RELEASE_FLAGS)
+CFLAGS=-D_GNU_SOURCE -fPIC -Wall -Wextra -pedantic -std=c17 -march=native $(DEBUG_RELEASE_FLAGS)
 
 release: clean
 release: DEBUG_RELEASE_FLAGS=-O3
 release: all
 
 imposer:
-	g++ -shared ./imposer.cpp -o imposer.so -ldl -fPIC
+	mkdir bin || true
+	g++ -shared src/imposer.cpp -o bin/imposer.so -ldl -fPIC
 	make offset_header
 
 objects:
+	make imposer
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/scan.o ./src/scan.c
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/parent_tracer.o ./src/parent_tracer.c
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/child_tracee.o ./src/child_tracee.c
@@ -21,19 +23,23 @@ objects:
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/mutator.o ./src/mutator.c
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/snapshot.o ./src/snapshot.c
 	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/memory.o ./src/memory.c
+	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/fffz.o ./src/fffz.c
 
-offset_header:
-	$(shell ./header_offset.sh)
+offset_header: # header_offset creates gen directory
+	$(shell ./scripts/header_offset.sh)
 
 fffz:
 	make objects
+	mkdir bin || true
 	$(CC) $(CFLAGS) -I ./inc -I ./gen -o ./bin/fffz ./obj/*.o
 
 target:
-	$(CC) $(CFLAGS) -I ./inc -I ./gen -o ./bin/target ./src/target.c
+	mkdir bin || true
+	$(CC) $(CFLAGS) -I ./inc -I ./gen -o ./bin/target -ldl ./src/target.c
 
 all:
 	mkdir obj || true
+	make format
 	make fffz
 	make target
 
@@ -41,7 +47,7 @@ format:
 	find . \( -name "*.h" -or -name "*.c" \) -exec clang-format -i {} -style="{BasedOnStyle: Google, IndentWidth: 4}" \;
 
 run:
-	./fffz ./target util.h
+	./bin/fffz ./bin/target ./inc/util.h
 
 clean:
-	rm -rf ./obj ./fffz ./target ./imposer.so ./imposer_offset_header.h
+	rm -rf ./obj ./bin ./gen

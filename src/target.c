@@ -1,9 +1,9 @@
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <dlfcn.h>
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     }
 
     // test restore, only if we have restore_offsets available
-    void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT, "restore_offsets");
+    void (*restore_offsets)() = (void (*)())dlsym(RTLD_NEXT, "restore_offsets");
     if (restore_offsets != NULL) {
         // ptrace will inject and run this function
         puts("testing restore_offsets...");

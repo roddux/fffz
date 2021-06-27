@@ -22,7 +22,7 @@ void child_main(char **proc) {
 
     // TODO: add imposer
     ret = setenv("LD_PRELOAD", IMPOSER_LIB_PATH, 0);
-    CHECK(ret==-1, "failed to setenv\n");
+    CHECK(ret == -1, "failed to setenv\n");
 
     LOG("calling execv\n");
     char *cmd = proc[0];

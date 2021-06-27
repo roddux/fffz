@@ -106,11 +106,11 @@ int path_matches_arguments(char *path) {
     // LOG("found %d global arguments\n", g_argc);
     // LOG("will now check for '%s'\n", path);
     for (uint8_t i = 0; i < g_argc; i++) {
-		if (strlen(path) == strlen(g_argv[i])) {
-			goto length_checks_out;
-		}
-	}
-	return PATH_NO_MATCH;
+        if (strlen(path) == strlen(g_argv[i])) {
+            goto length_checks_out;
+        }
+    }
+    return PATH_NO_MATCH;
 length_checks_out:
     for (uint8_t i = 0; i < g_argc; i++) {
         uint8_t shortest =
@@ -178,12 +178,12 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 //                LOG("open('%s', ...)\n", tmp_path);
                 if (is_path_blacklisted(tmp_path) == PATH_NOT_ON_BLACKLIST) {
                     if (path_matches_arguments(tmp_path) == PATH_IS_MATCH) {
-						if(file_name == NULL) {
-							file_name = strdup(tmp_path);
-							LOG("found target file: '%s'\n", file_name);
-						} else {
-							LOG("dupe openat() on target file?\n");
-						}
+                        if (file_name == NULL) {
+                            file_name = strdup(tmp_path);
+                            LOG("found target file: '%s'\n", file_name);
+                        } else {
+                            LOG("dupe openat() on target file?\n");
+                        }
                     }
                 }
                 memset(&tmp_path, 0, 256);
@@ -203,7 +203,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 file_name = NULL;
                 break;
             case __NR_lseek:
-                //CHECK(1, "fffz does not support programs that seek()\n");
+                // CHECK(1, "fffz does not support programs that seek()\n");
                 print_syscall(syzinfo);
                 break;
         }
@@ -212,11 +212,12 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
         //        LOG("leaving syscall %s(...)\n", syscall_names[last_syscall]);
         if (last_syscall == __NR_exit) {
             restore_snapshot(child_pid);
-			// restore filedes offsets by calling our injected function
-			LOG("restoing filedescriptor offsets\n");
-		
+            // restore filedes offsets by calling our injected function
+            LOG("restoing filedescriptor offsets\n");
+
             // extern "C" void restore_offsets()
-            // void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT, "restore_offsets");
+            // void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT,
+            // "restore_offsets");
 
             // what we have to do here is get the child to call
             // restore_offsets. restore_offsets has been injected via
