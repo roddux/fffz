@@ -16,14 +16,14 @@ imposer:
 
 objects:
 	make imposer
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/scan.o ./src/scan.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/parent_tracer.o ./src/parent_tracer.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/child_tracee.o ./src/child_tracee.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/syscalls.o ./src/syscalls.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/mutator.o ./src/mutator.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/snapshot.o ./src/snapshot.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/memory.o ./src/memory.c
-	$(CC) $(CFLAGS) -c -I ./inc -I ./gen -o ./obj/fffz.o ./src/fffz.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/scan.o ./src/scan.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/parent_tracer.o ./src/parent_tracer.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/child_tracee.o ./src/child_tracee.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/syscalls.o ./src/syscalls.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/mutator.o ./src/mutator.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/snapshot.o ./src/snapshot.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/memory.o ./src/memory.c
+	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/fffz.o ./src/fffz.c
 
 offset_header: # header_offset creates gen directory
 	$(shell ./scripts/header_offset.sh)
