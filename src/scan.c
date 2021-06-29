@@ -1,3 +1,4 @@
+#define __SRCFILE__ "scan"
 #include "scan.h"
 
 #include <fcntl.h>      // O_RDONLY
@@ -6,6 +7,8 @@
 #include <stdlib.h>     // malloc, realloc
 #include <string.h>     // strchr, strtok
 #include <sys/types.h>  // pid
+
+#include "util.h"
 
 // fscanf doesn't deal with optional fields; if we scan a line without a path,
 // it breaks -- which is why we use strtok
@@ -92,13 +95,6 @@ map_entry **parse_buffer_to_entry_list(uint8_t *buf, size_t entries) {
     return entry_list;
 }
 
-#define PERM_R 0b0000001
-#define PERM_W 0b0000010
-#define PERM_X 0b0000100
-#define PERM_RW 0b0000011
-#define PERM_RWX 0b0000111
-#define IS_READABLE(X) (X->perms[0] == 'r')
-#define IS_WRITEABLE(X) (X->perms[1] == 'w')
 map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     // cat /proc/sys/kernel/pid_max == 4194304 == len(7)
     // 7 + len("/proc/") + len("/maps") + len("\0") == 19
@@ -115,7 +111,7 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     size_t used_len = 0;
     map_entry **used_entries = malloc(sizeof(map_entry) * len);
     printf("**used_entries is at %p\n", used_entries);
-    for (int c = 0; c < len; c++) {
+    for (size_t c = 0; c < len; c++) {
         printf("checking item %d\n", c);
         map_entry *cur, **new;
         cur = entries[c];
@@ -151,13 +147,30 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     return ret;
 }
 
+uintptr_t get_base_addr_for_page(char *page, map_list *lst) {
+    map_entry **entry_list = lst->entries;
+    map_entry *cur;
+    LOG("looking for base address of given path: '%s'\n", page);
+    for (size_t j = 0; j < lst->len; j++) {
+        cur = entry_list[j];
+        if (strstr(cur->path, page) !=
+            NULL) {  // hope we don't get a big path :L
+            printf("got base addr for path '%s': %p\n", cur->path, cur->start);
+            return cur->start;
+        }
+    }
+    CHECK(1, "failed to find base addr for given path!");
+    return 0;
+}
+
 #if 0
 int main() {
     pid_t trg = getpid();
     map_list *list = get_maps_for_pid(trg, PERM_W);
     print_list(list);
     free(list);
-    list = get_maps_for_pid(trg, PERM_R|PERM_W);
+    list = get_maps_for_pid(trg, PERM_R | PERM_W);
     print_list(list);
+    get_base_addr_for_page("imposer.so", list);
 }
 #endif

@@ -5,6 +5,10 @@ DEBUG_RELEASE_FLAGS=-Og -ggdb -D_GNU_SOURCE
 CC=gcc
 CFLAGS=-D_GNU_SOURCE -fPIC -Wall -Wextra -pedantic -std=c17 -march=native $(DEBUG_RELEASE_FLAGS)
 
+# oh my god shut up
+CFLAGS+=-Wno-format
+CFLAGS+=-Wno-unused-label
+
 release: clean
 release: DEBUG_RELEASE_FLAGS=-O3
 release: all

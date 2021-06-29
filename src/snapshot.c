@@ -1,6 +1,7 @@
 #include <string.h>
 #include <sys/ptrace.h>
 #include <sys/user.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "scan.h"  // /proc/X/maps stuff
@@ -13,7 +14,7 @@
 #define STOP_WHEN_SNAPPING 0
 
 #define STEPS_SKIP 0
-#define DEBUG_STEPS 2  // we want to get up to 726/727
+#define DEBUG_STEPS 0  // we want to get up to 726/727
 
 typedef struct snapshot_area {
     uintptr_t original_address;
@@ -37,7 +38,7 @@ void save_snapshot(pid_t pid) {
     LOG("before snapshot save\n");
     getchar();
 #endif
-    map_list *list = get_maps_for_pid(pid);
+    map_list *list = get_maps_for_pid(pid, PERM_RW);
     // print_list(list);
     map_entry **entry_list = list->entries;
     map_entry *cur_map_entry;
@@ -55,12 +56,6 @@ void save_snapshot(pid_t pid) {
         LOG("snap->memory_stores[j] is at %p\n", &snap->memory_stores[j]);
         LOG("cur_snap_area is at %p\n", cur_snap_area);
 #endif
-
-        if (cur_map_entry->perms[0] == '-' ||
-            cur_map_entry->perms[1] == '-') {  // not readable/writeable
-            //            LOG("skipping non-writeable page\n");
-            continue;
-        }
 
         if (strcmp(cur_map_entry->path, "[vvar]") == 0 ||
             strcmp(cur_map_entry->path, "[vsyscall]") == 0 ||
@@ -96,7 +91,7 @@ void save_snapshot(pid_t pid) {
 #if STOP_WHEN_SNAPPING
     LOG("after snapshot save\n");
     getchar();
-    debug_regs_singlestep(pid, DEBUG_STEPS);
+    // debug_regs_singlestep(pid, DEBUG_STEPS);
     getchar();
 #endif
 }
@@ -113,7 +108,7 @@ void restore_snapshot(pid_t pid) {
     LOG("before restore\n");
     getchar();
 #endif
-    map_list *list = get_maps_for_pid(pid);
+    map_list *list = get_maps_for_pid(pid, PERM_RW);
     map_entry **entry_list = list->entries;
     map_entry *cur_map_entry;
     snapshot_area *cur_snap_area;
@@ -125,12 +120,6 @@ void restore_snapshot(pid_t pid) {
         //        snap->memory_stores); LOG("snap->memory_stores[j] is at
         //        %p\n", &snap->memory_stores[j]); LOG("cur_snap_area is at
         //        %p\n", cur_snap_area);
-        // TODO: handle this elsewhere
-        if (cur_map_entry->perms[0] == '-' ||
-            cur_map_entry->perms[1] == '-') {  // not readable/writeable
-            //            LOG("skipping non-writeable page\n");
-            continue;
-        }
 
         if (strcmp(cur_map_entry->path, "[vvar]") == 0 ||
             strcmp(cur_map_entry->path, "[vsyscall]") == 0 ||
@@ -163,7 +152,7 @@ void restore_snapshot(pid_t pid) {
 #if STOP_WHEN_SNAPPING
     LOG("after restore\n");
     getchar();
-    debug_regs_singlestep(pid, DEBUG_STEPS);
+    // debug_regs_singlestep(pid, DEBUG_STEPS);
 #endif
 }
 
@@ -172,8 +161,9 @@ int have_snapshot() {
     return HAVE_SNAPSHOT;
 }
 
+#if DEBUG_STEPS  // stop the compiler moaning if STEPS_SKIP is 0
 void debug_regs_singlestep(pid_t pid, uint64_t steps) {
-    map_list *list = get_maps_for_pid(pid);
+    map_list *list = get_maps_for_pid(pid, PERM_RW);
     print_list(list);
     struct user_regs_struct check_regs;
     for (uint64_t _ = 0; _ < steps; _++) {
@@ -201,6 +191,7 @@ void debug_regs_singlestep(pid_t pid, uint64_t steps) {
         }
     }
 }
+#endif
 
 #if 0
 void dump_snapshot_info() {
