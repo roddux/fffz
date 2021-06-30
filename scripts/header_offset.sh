@@ -2,7 +2,7 @@
 # forget trying to do this in a Makefile
 mkdir gen || true
 (
-    echo -n "uinptr_t offset = 0x";
+    echo -n "uintptr_t _restore_offsets_function_address = 0x";
     readelf --dyn-syms bin/imposer.so |\
     awk '/restore_offsets/{print $2}'|\
     tr '\n' ';';
