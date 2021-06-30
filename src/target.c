@@ -19,8 +19,11 @@ int main(int argc, char **argv) {
         puts("opened file, yey");
     }
 
-    // test seek
+    // test seek/restore, only if we have restore_offsets available
     lseek(fd, 10, SEEK_SET);
+    puts("seeking to offset 10");
+    lseek(fd, 0, SEEK_SET);
+    puts("seeking to offset 0");
 
     puts("------: file data :------");
     int c;
@@ -29,7 +32,7 @@ int main(int argc, char **argv) {
         putchar(c);
     }
 
-    // test restore, only if we have restore_offsets available
+#if 0
     void (*restore_offsets)() = (void (*)())dlsym(RTLD_NEXT, "restore_offsets");
     if (restore_offsets != NULL) {
         // ptrace will inject and run this function
@@ -38,6 +41,7 @@ int main(int argc, char **argv) {
         restore_offsets();
         printf("    new offset on fd %d: %lu\n", fd, ftell(stream));
     }
+#endif
 
     return 0;
 }

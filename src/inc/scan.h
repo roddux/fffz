@@ -16,11 +16,14 @@ typedef struct map_list {
 
 void print_list(map_list *lst);
 
-#define PERM_R 1    // 0b0000001
-#define PERM_W 2    // 0b0000010
-#define PERM_X 4    // 0b0000100
-#define PERM_RW 3   // 0b0000011
-#define PERM_RWX 7  // 0b0000111
+#define PERM_R 1   // 0b0000001
+#define PERM_W 2   // 0b0000010
+#define PERM_X 4   // 0b0000100
+#define PERM_RW 3  // 0b0000011
+#if 0
 #define IS_READABLE(X) (X->perms[0] == 'r')
 #define IS_WRITEABLE(X) (X->perms[1] == 'w')
+#endif
 map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS);
+
+uintptr_t get_base_addr_for_page(char *page, map_list *lst);

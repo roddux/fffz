@@ -10,11 +10,11 @@
 #include "snapshot.h"  // defines
 #include "util.h"      // LOG
 
-#define DEBUG_SNAPSHOTS 1
+#define DEBUG_SNAPSHOTS 0
 #define STOP_WHEN_SNAPPING 0
 
 #define STEPS_SKIP 0
-#define DEBUG_STEPS 0  // we want to get up to 726/727
+#define DEBUG_STEPS 1024  // we want to get up to 726/727
 
 typedef struct snapshot_area {
     uintptr_t original_address;
@@ -29,7 +29,7 @@ typedef struct process_snapshot {
     struct user_fpregs_struct fpregs;
 } process_snapshot;
 
-uint64_t SNAPS = 0;
+uint64_t SNAPS = 10;
 process_snapshot *snap = NULL;
 void save_snapshot(pid_t pid) {
     CHECK(snap != NULL, "save_snapshot called when we already have one!\n");
@@ -70,6 +70,7 @@ void save_snapshot(pid_t pid) {
         cur_snap_area->original_address = orig_addr;
 
         uint8_t *buf = malloc(sizeof(uint8_t) * sz);
+        memset(buf, 0, sizeof(uint8_t) * sz);
         cur_snap_area->backing = buf;
         CHECK(buf == NULL, "could not allocate space for snapshot\n");
 
@@ -79,6 +80,14 @@ void save_snapshot(pid_t pid) {
             (void *)cur_map_entry->end, sz);
 #endif
         ssize_t read = read_from_memory(pid, buf, orig_addr, sz);
+#if 0
+        LOG("our buffer, from readv\n");
+        for (int x = 0; x < 64; x++) {
+            if (x % 8 == 0) fprintf(stderr, "\n");
+            fprintf(stderr, "%x ", buf[x]);
+        }
+        fprintf(stderr, "\n\n");
+#endif
         CHECK((size_t)read != sz, "did not read expected amount of memory!\n");
     }
     LOG("saving registers\n");
@@ -91,68 +100,85 @@ void save_snapshot(pid_t pid) {
 #if STOP_WHEN_SNAPPING
     LOG("after snapshot save\n");
     getchar();
-    // debug_regs_singlestep(pid, DEBUG_STEPS);
+    debug_regs_singlestep(pid, DEBUG_STEPS);
     getchar();
 #endif
 }
 
-void restore_snapshot(pid_t pid) {
+void restore_snapshot(pid_t pid, int TYPE) {
     CHECK(snap == NULL, "snapshot is null! none taken??\n");
     LOG("restoring snapshot of pid %d\n", pid);
-#if DEBUG_SNAPSHOTS
+#if 1
     LOG("at snapshot restore, saved RIP is %p\n",
         (void *)snap->regs.rip);  // assuming 64-bit
-    CHECK(SNAPS++ == 1, "2 runs completed\n");
+//    CHECK(SNAPS++ == 1, "2 runs completed\n");
 #endif
 #if STOP_WHEN_SNAPPING
     LOG("before restore\n");
     getchar();
 #endif
-    map_list *list = get_maps_for_pid(pid, PERM_RW);
-    map_entry **entry_list = list->entries;
-    map_entry *cur_map_entry;
-    snapshot_area *cur_snap_area;
-    // TODO: batch these into a single process_vm_writev
-    for (size_t j = 0; j < list->len; j++) {
-        cur_map_entry = entry_list[j];
-        cur_snap_area = &snap->memory_stores[j];
-        //        LOG("snap->memory_stores is at %p\n",
-        //        snap->memory_stores); LOG("snap->memory_stores[j] is at
-        //        %p\n", &snap->memory_stores[j]); LOG("cur_snap_area is at
-        //        %p\n", cur_snap_area);
 
-        if (strcmp(cur_map_entry->path, "[vvar]") == 0 ||
-            strcmp(cur_map_entry->path, "[vsyscall]") == 0 ||
-            strcmp(cur_map_entry->path, "[vdso]") == 0) {
-            //            LOG("skipping region %s\n", cur_map_entry->path);
-            continue;
-        }
+    if (TYPE == RESTORE_MEMORY || TYPE == RESTORE_BOTH) {
+        map_list *list = get_maps_for_pid(pid, PERM_RW);
+        map_entry **entry_list = list->entries;
+        map_entry *cur_map_entry;
+        snapshot_area *cur_snap_area;
+        // TODO: batch these into a single process_vm_writev
+        for (size_t j = 0; j < list->len; j++) {
+            cur_map_entry = entry_list[j];
+            cur_snap_area = &snap->memory_stores[j];
+            //        LOG("snap->memory_stores is at %p\n",
+            //        snap->memory_stores); LOG("snap->memory_stores[j] is at
+            //        %p\n", &snap->memory_stores[j]); LOG("cur_snap_area is at
+            //        %p\n", cur_snap_area);
+
+            if (strcmp(cur_map_entry->path, "[vvar]") == 0 ||
+                strcmp(cur_map_entry->path, "[vsyscall]") == 0 ||
+                strcmp(cur_map_entry->path, "[vdso]") == 0) {
+                //            LOG("skipping region %s\n", cur_map_entry->path);
+                continue;
+            }
 
 #if DEBUG_SNAPSHOTS
-        LOG("page: %s : %p : %s\n", cur_map_entry->path,
-            (void *)cur_map_entry->start, cur_map_entry->perms);
-        LOG("writing region %s[%p-%p, %lu] from snapshot\n(%lu bytes, from %p "
-            "to %p)\n",
-            cur_map_entry->path, (void *)cur_map_entry->start,
-            (void *)cur_map_entry->end, cur_snap_area->size,
-            cur_snap_area->size, (void *)cur_snap_area->backing,
-            (void *)cur_snap_area->original_address);
+            LOG("page: %s : %p : %s\n", cur_map_entry->path,
+                (void *)cur_map_entry->start, cur_map_entry->perms);
+            LOG("writing region %s[%p-%p, %lu] from snapshot\n(%lu bytes, from "
+                "%p "
+                "to %p)\n",
+                cur_map_entry->path, (void *)cur_map_entry->start,
+                (void *)cur_map_entry->end, cur_snap_area->size,
+                cur_snap_area->size, (void *)cur_snap_area->backing,
+                (void *)cur_snap_area->original_address);
 #endif
-        ssize_t written = write_to_memory(pid, cur_snap_area->backing,
-                                          cur_snap_area->original_address,
-                                          cur_snap_area->size);
-        CHECK((size_t)written != cur_snap_area->size,
-              "did not write expected amount of memory!\n");
+            ssize_t written = write_to_memory(pid, cur_snap_area->backing,
+                                              cur_snap_area->original_address,
+                                              cur_snap_area->size);
+#if DEBUG_SNAPSHOTS
+            for (int x = 0; x < 64; x++) {
+                if (x % 8 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "%x ", cur_snap_area->backing[x]);
+            }
+            fprintf(stderr, "\n\n");
+#endif
+            CHECK((size_t)written != cur_snap_area->size,
+                  "did not write expected amount of memory!\n");
+        }
     }
-    //    LOG("restoring registers\n");
-    int ret = ptrace(PTRACE_SETREGS, pid, NULL, &snap->regs);
-    CHECK(ret == -1, "failed to set registers\n");
-    ret = ptrace(PTRACE_SETFPREGS, pid, NULL, &snap->fpregs);
-    CHECK(ret == -1, "failed to set fp registers\n");
+    if (TYPE == RESTORE_REGISTERS || TYPE == RESTORE_BOTH) {
+        LOG("restoring registers\n");
+        int ret = ptrace(PTRACE_SETREGS, pid, NULL, &snap->regs);
+        CHECK(ret == -1, "failed to set registers\n");
+        ret = ptrace(PTRACE_SETFPREGS, pid, NULL, &snap->fpregs);
+        CHECK(ret == -1, "failed to set fp registers\n");
+        struct user_regs_struct check_regs;
+        ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
+        CHECK(ret == -1, "failed to get registers\n");
+        LOG("new RIP: %p\n", check_regs.rip);
+    }
 #if STOP_WHEN_SNAPPING
     LOG("after restore\n");
     getchar();
-    // debug_regs_singlestep(pid, DEBUG_STEPS);
+    debug_regs_singlestep(pid, DEBUG_STEPS);
 #endif
 }
 

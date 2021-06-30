@@ -95,6 +95,11 @@ map_entry **parse_buffer_to_entry_list(uint8_t *buf, size_t entries) {
     return entry_list;
 }
 
+int IS_READABLE(map_entry *X) { return (X->perms[0] == 'r'); }
+int IS_WRITEABLE(map_entry *X) { return (X->perms[1] == 'w'); }
+int IS_READWRITE(map_entry *X) { return (IS_READABLE(X) && IS_WRITEABLE(X)); }
+int IS_EXECUTABLE(map_entry *X) { return (X->perms[2] == 'x'); }
+
 map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     // cat /proc/sys/kernel/pid_max == 4194304 == len(7)
     // 7 + len("/proc/") + len("/maps") + len("\0") == 19
@@ -104,41 +109,31 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     size_t len = count_entries(filebuf);
     map_entry **entries = parse_buffer_to_entry_list(filebuf, len);
 
-    printf("**entries is at %p\n", entries);
-    printf("page_options is %d", PAGE_OPTIONS);
+    LOG("**entries is at %p\n", entries);
+    LOG("page_options is %d\n", PAGE_OPTIONS);
 
     // filter list based on options
     size_t used_len = 0;
     map_entry **used_entries = malloc(sizeof(map_entry) * len);
-    printf("**used_entries is at %p\n", used_entries);
+    LOG("**used_entries is at %p\n", used_entries);
     for (size_t c = 0; c < len; c++) {
-        printf("checking item %d\n", c);
+        // LOG("checking item %d\n", c);
         map_entry *cur, **new;
         cur = entries[c];
-
-        if (PAGE_OPTIONS == PERM_W) {
-            if (IS_WRITEABLE(cur)) {
-                new = &used_entries[used_len++];
-                printf("writeable! new is %p, cur is %p\n", new, cur);
-                *new = cur;
-            }
-        } else if (PAGE_OPTIONS == PERM_R) {
-            if (IS_READABLE(cur)) {
-                new = &used_entries[used_len++];
-                printf("readable! new is %p, cur is %p\n", new, cur);
-                *new = cur;
-            }
-        } else if (PAGE_OPTIONS == PERM_RW) {
-            if (IS_READABLE(cur) && IS_WRITEABLE(cur)) {
-                new = &used_entries[used_len++];
-                printf("read+write! new is %p, cur is %p\n", new, cur);
-                *new = cur;
-            }
+        int (*conditions[])(map_entry *) = {
+            NULL,
+            IS_READABLE,    // PERM_R  == 0b00000001 == 1
+            IS_WRITEABLE,   // PERM_W  == 0b00000010 == 2
+            IS_READWRITE,   // PERM_RW == 0b00000011 == 3
+            IS_EXECUTABLE,  // PERM_X  == 0b00000100 == 4
+        };
+        int (*condition)(map_entry *) = conditions[PAGE_OPTIONS];
+        if (condition(cur)) {
+            new = &used_entries[used_len++];
+            *new = cur;
         }
     }
-    puts("boutta realloc");
     used_entries = realloc(used_entries, sizeof(map_entry) * used_len);
-    puts("boutta free");
     free(entries);
 
     map_list *ret = malloc(sizeof(map_list));
@@ -150,12 +145,13 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
 uintptr_t get_base_addr_for_page(char *page, map_list *lst) {
     map_entry **entry_list = lst->entries;
     map_entry *cur;
+    // print_list(lst);
     LOG("looking for base address of given path: '%s'\n", page);
     for (size_t j = 0; j < lst->len; j++) {
         cur = entry_list[j];
         if (strstr(cur->path, page) !=
             NULL) {  // hope we don't get a big path :L
-            printf("got base addr for path '%s': %p\n", cur->path, cur->start);
+            LOG("got base addr for path '%s': %p\n", cur->path, cur->start);
             return cur->start;
         }
     }

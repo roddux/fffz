@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <unistd.h>  // readlink
 
+#include "imposer_offset_header.h"
 #include "memory.h"
 #include "mutator.h"
 #include "scan.h"  // /proc/X/maps stuff
@@ -150,7 +151,6 @@ uint64_t last_syscall = 0;
 char *file_name = NULL;
 int16_t file_fd = -1;
 uintptr_t buffer_addr;
-uint8_t restore_next = 0;
 
 void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     uint8_t reason) {
@@ -168,7 +168,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 // check_regs.rax = -1;
                 ret = ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs);
                 CHECK(ret == -1, "failed to set registers\n");
-                restore_next = 1;
                 break;
             case __NR_openat:
                 // TODO: make sure we don't read unmapped/non-readable memory
@@ -210,34 +209,98 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
     }
     if (reason == PTRACE_SYSCALL_INFO_EXIT) {
         //        LOG("leaving syscall %s(...)\n", syscall_names[last_syscall]);
-        if (last_syscall == __NR_exit) {
-            restore_snapshot(child_pid);
-            // restore filedes offsets by calling our injected function
-            LOG("restoing filedescriptor offsets\n");
+        if (last_syscall == __NR_exit || last_syscall == __NR_exit_group) {
+            restore_snapshot(child_pid, RESTORE_MEMORY);
+            // restore memory to get us back to the saved fil offsets in our
+            // injected library restore filedes offsets by calling our injected
+            // function
+            LOG("restoring filedescriptor offsets\n");
 
-            // extern "C" void restore_offsets()
-            // void(*restore_offsets)() = (void(*)())dlsym(RTLD_NEXT,
-            // "restore_offsets");
+            map_list *lst = get_maps_for_pid(child_pid, PERM_X);
+            uintptr_t base_address = get_base_addr_for_page("imposer.so", lst);
+            free(lst);
 
-            // what we have to do here is get the child to call
-            // restore_offsets. restore_offsets has been injected via
-            // LD_PRELOAD trickery, so we need to get the child to call dlsym()
-            // to retrieve the address of restore_offsets, THEN call it ...
+#if 0
+            LOG("  base: %p\n", base_address);
+            LOG("offset: %p\n", _restore_offsets_function_address);
+            LOG("  func: %p\n",
+                base_address + _restore_offsets_function_address);
+#endif
 
-            // or, we write down the offset of restore_offsets for a specific
-            // build of imposer.so and then check /proc/pid/maps looking for
-            // the library's base address, so we can calculate the function
-            // address that way. might be faster? requires cleaning up
-            // /proc/pid/maps code, though.
+            // overwrite current RIP with address of $restore_offsets
+            // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
+            struct user_regs_struct check_regs;
+            uintptr_t x = base_address + _restore_offsets_function_address -
+                          0x5000;  // TODO: this is hacked in because we need to
+                                   // account for the offset in the file that
+                                   // the executable area is loaded
+            // tl;dr, fixup the readelf header script
+            LOG("boutta getregs\n");
+            CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
+            check_regs.rip = x;
+            LOG("aboutta setregs\n");
+            CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
 
-            // using method-2.
+#if 0
+            LOG("setregs done, about to single-step\n");
+            // lets check if the memory at this address looks like what we want
+            // ...
+            uint8_t *buf = malloc(128 * sizeof(uint8_t));
+            LOG("dumping 128 bytes from : %p\n", x);
+            read_from_memory(child_pid, buf, x, 128);
+            for (int i = 0; i < 128; i++) {
+                if (i % 8 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "0x%02x ", buf[i]);
+            }
+            fprintf(stderr, "\n\n");
+#endif
+            int status;
+#if 0
+            //            CHECK(1, "exit\n");
+//            parent_debug_regs_singlestep(child_pid, 5);
+//            return;
+
+            CHECKP(ptrace(PTRACE_SINGLESTEP, child_pid, NULL, NULL) == -1);
+            LOG("singlestep done, about to getregs\n");
+            waitpid(child_pid, &status, 0);
+            CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
+
+            LOG("rip: %" PRIx64 "\nrdi: %" PRIx64 "\nrsi: %" PRIx64
+                "\nrdx: %" PRIx64 "\nr10: %" PRIx64 "\n r8: %" PRIx64
+                "\n r9: %" PRIx64 "\n cs: %" PRIx64 "\n eflags: %" PRIx64
+                "\n rbx: %" PRIx64 "\n rbp: %" PRIx64 "\n",
+                check_regs.rip, check_regs.rdi, check_regs.rsi, check_regs.rdx,
+                check_regs.r10, check_regs.r8, check_regs.r9, check_regs.cs,
+                check_regs.eflags, check_regs.rbx, check_regs.rbp);
+#endif
+            // continue until we hit the int3 in interposer
+            LOG("continuing child (to run our injected func)\n");
+            CHECKP(ptrace(PTRACE_CONT, child_pid, NULL, NULL) == -1);
+            waitpid(child_pid, &status, 0);
+
+            if (WIFEXITED(status)) {
+                LOG("Exit status %d\n", WEXITSTATUS(status));
+            } else if (WIFSIGNALED(status)) {
+                LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
+                    strsignal(WTERMSIG(status)),
+                    WCOREDUMP(status) ? " (core dumped)" : "");
+            } else if (WIFCONTINUED(status)) {
+                LOG("Continued\n");
+            } else if (WIFSTOPPED(status)) {
+                LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
+                    strsignal(WSTOPSIG(status)));
+            }
+
+            LOG("back in control!\n");
+            restore_snapshot(child_pid, RESTORE_MEMORY);
+
+            restore_snapshot(child_pid,
+                             RESTORE_REGISTERS);  // restore RIP back from our
+                                                  // injected function
 
             LOG("snapshot restored\n");
-
-            // so here we're assuming that the target program reads the file
-            // into one contiguous buffer
 #if 0
-			LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
+            LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
             uint8_t *junk = malloc(_full_fsz * sizeof(uint8_t));
             read_from_memory(child_pid, junk, buffer_addr, _full_fsz);
             mutate(junk, _full_fsz, 2);
@@ -261,9 +324,51 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     have_read_full_filesize(file_name, rval) == FILE_FINISHED) {
                     save_snapshot(child_pid);
                     // dump_snapshot_info();
-                    return;
                 }
             }
+        }
+    }
+}
+
+void parent_debug_regs_singlestep(pid_t pid, uint64_t steps) {
+    struct user_regs_struct check_regs;
+    for (uint64_t _ = 0; _ < steps; _++) {
+        int ret = ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL);
+        CHECK(ret == -1, "failed to singlestep\n");
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (WIFEXITED(status)) {
+            LOG("Exit status %d\n", WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
+                strsignal(WTERMSIG(status)),
+                WCOREDUMP(status) ? " (core dumped)" : "");
+        } else if (WIFCONTINUED(status)) {
+            LOG("Continued\n");
+        } else if (WIFSTOPPED(status)) {
+            LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
+                strsignal(WSTOPSIG(status)));
+        }
+
+        if (WIFSTOPPED(status)) {
+            ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
+            CHECK(ret == -1, "failed to check registers\n");
+            // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
+            //   kernel: %rdi, %rsi, %rdx, %r10, %r8 and %r9
+            LOG("step %d: rip=%" PRIx64 "\n", _, check_regs.rip);
+            /*
+            LOG("step %d\nrip: %" PRIx64 "\nrdi: %" PRIx64 "\nrsi: %" PRIx64
+                "\nrdx: %" PRIx64 "\nr10: %" PRIx64 "\n r8: %" PRIx64
+                "\n r9: %" PRIx64 "\n cs: %" PRIx64 "\n eflags: %" PRIx64
+                "\n rbx: %" PRIx64 "\n rbp: %" PRIx64 "\n",
+                _, check_regs.rip, check_regs.rdi, check_regs.rsi,
+                check_regs.rdx, check_regs.r10, check_regs.r8, check_regs.r9,
+                check_regs.cs, check_regs.eflags, check_regs.rbx,
+                check_regs.rbp);*/
+
+        } else {
+            CHECK(1, "oops\n");
         }
     }
 }
@@ -276,11 +381,14 @@ void parent_action(pid_t child_pid) {
         waitpid(child_pid, &status, 0);
 
         if (WIFEXITED(status)) {
-            LOG("WIFEXITED!\n");
+            LOG("Exit status %d\n", WEXITSTATUS(status));
             break;
-        }
-        if (WIFSIGNALED(status)) {
-            fprintf(stderr, "!!! WIFSIGNALED !!!\n");
+        } else if (WIFSIGNALED(status)) {
+            LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
+                strsignal(WTERMSIG(status)),
+                WCOREDUMP(status) ? " (core dumped)" : "");
+        } else if (WIFCONTINUED(status)) {
+            LOG("Continued\n");
         }
         if (WIFSTOPPED(status)) {
             if (is_first_stop) {
@@ -290,8 +398,35 @@ void parent_action(pid_t child_pid) {
                              PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXIT);
                 CHECK(ret == -1, "failed to PTRACE_SETOPTIONS\n");
             }
-            // LOG("child has stopped with signal %s (%d)\n",
-            // signal_names[WSTOPSIG(status)], WSTOPSIG(status));
+            if (WSTOPSIG(status) == 11) {
+                LOG("SEGFAULT!\n");
+
+                // ...
+                uint8_t *buf = malloc(128 * sizeof(uint8_t));
+                struct user_regs_struct check_regs;
+                ret = ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs);
+                LOG("dumping 128 bytes from : %p\n", check_regs.rip);
+                read_from_memory(child_pid, buf, check_regs.rip, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (i % 8 == 0) fprintf(stderr, "\n");
+                    fprintf(stderr, "0x%02x ", buf[i]);
+                }
+                fprintf(stderr, "\n\n");
+                map_list *lst = get_maps_for_pid(child_pid, PERM_RW);
+                uintptr_t stack = get_base_addr_for_page("stack", lst);
+                free(lst);
+                LOG("dumping 128 bytes from stack: %p\n", stack);
+                read_from_memory(child_pid, buf, stack, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (i % 8 == 0) fprintf(stderr, "\n");
+                    fprintf(stderr, "0x%02x ", buf[i]);
+                }
+                getchar();
+                break;
+            }
+
+            LOG("child has stopped with signal %s (%d)\n",
+                signal_names[WSTOPSIG(status)], WSTOPSIG(status));
         }
 
         // if not stopped by a syscall, skip it
@@ -313,6 +448,7 @@ void parent_action(pid_t child_pid) {
         }
 
         // resume until next syscall
+        // LOG("boutta PTRACE_SYSCALL\n");
         ret = ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
         CHECK(ret == -1, "failed to ptrace_syscall\n");
     }

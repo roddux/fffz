@@ -51,7 +51,7 @@ format:
 	find . \( -name "*.h" -or -name "*.c" \) -exec clang-format -i {} -style="{BasedOnStyle: Google, IndentWidth: 4}" \;
 
 run:
-	./bin/fffz ./bin/target ./inc/util.h
+	./bin/fffz ./bin/target ./src/inc/util.h
 
 clean:
 	rm -rf ./obj ./bin ./gen

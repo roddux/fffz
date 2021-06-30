@@ -21,6 +21,7 @@ extern "C" void store_seek_for_fd(int fd, uint64_t seek) { fdmap[fd] = seek; }
 extern "C" uint64_t get_seek_for_fd(int fd) { return fdmap[fd]; }
 
 extern "C" off_t lseek(int filedes, off_t offset, int whence) {
+    fprintf(stderr, "imposer caught an lseek(fd:%d, off:%lu)\n", filedes, offset);
     void *fp = dlsym(RTLD_NEXT, "lseek");
     original_lseek = (off_t(*)(int,off_t,int))fp;
     off_t returned_offset = (*original_lseek)(filedes, offset, whence);
@@ -29,10 +30,16 @@ extern "C" off_t lseek(int filedes, off_t offset, int whence) {
 }
 
 extern "C" void restore_offsets() {
+    fprintf(stderr, "NOW IN RESTORE_OFFSETS!\n");
     std::map<int,uint64_t>::iterator it = fdmap.begin();
     while(it != fdmap.end()) {
-        fprintf(stderr, "restoring filedes %d to offset %lu\n", it->first, it->second);
+        fprintf(stderr, "restoring: %d to %lu\n", it->first, it->second);
+//        fprintf(stderr, "restoring filedes %d to offset %lu\n", it->first,
+//        it->second);
         original_lseek(it->first, it->second, SEEK_SET);
         it++;
     }
+    fprintf(stderr, "boutta hit an int3\n");
+    __asm__("int $3"); // throw a TRAP here to save time with ptrace
+    fprintf(stderr, "SHOULD NEVER HIT HERE\n");
 }

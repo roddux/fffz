@@ -1,4 +1,4 @@
-#define DEBUG 1
+#define DEBUG 0
 #include <stdio.h>   // fprintf
 #include <stdlib.h>  // exit
 #define LOG(...)                                                               \
@@ -7,6 +7,13 @@
             fprintf(stderr, "%s/%s():%d - ", __SRCFILE__, __func__, __LINE__); \
             fprintf(stderr, __VA_ARGS__);                                      \
         } while (0);                                                           \
+    }
+
+#define CHECKP(COND) \
+    if (COND) {      \
+        LOG(#COND);  \
+        perror(0);   \
+        exit(-1);    \
     }
 
 #define CHECK(COND, MSG) \

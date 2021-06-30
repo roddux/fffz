@@ -8,7 +8,7 @@
 
 #include "util.h"  // CHECK and LOG
 
-#define IMPOSER_LIB_PATH "/home/user/fffz/imposer.so"
+#define IMPOSER_LIB_PATH "/home/user/fffz/bin/imposer.so"
 
 void child_main(char **proc) {
     int ret;
