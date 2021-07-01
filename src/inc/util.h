@@ -1,4 +1,4 @@
-#define DEBUG 0
+#define DEBUG 1
 #include <stdio.h>   // fprintf
 #include <stdlib.h>  // exit
 #define LOG(...)                                                               \

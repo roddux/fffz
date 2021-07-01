@@ -30,7 +30,7 @@ extern "C" off_t lseek(int filedes, off_t offset, int whence) {
 }
 
 extern "C" void restore_offsets() {
-    fprintf(stderr, "NOW IN RESTORE_OFFSETS!\n");
+    //fprintf(stderr, "NOW IN RESTORE_OFFSETS!\n");
     std::map<int,uint64_t>::iterator it = fdmap.begin();
     while(it != fdmap.end()) {
         fprintf(stderr, "restoring: %d to %lu\n", it->first, it->second);
@@ -39,7 +39,7 @@ extern "C" void restore_offsets() {
         original_lseek(it->first, it->second, SEEK_SET);
         it++;
     }
-    fprintf(stderr, "boutta hit an int3\n");
+//    fprintf(stderr, "boutta hit an int3\n");
     __asm__("int $3"); // throw a TRAP here to save time with ptrace
-    fprintf(stderr, "SHOULD NEVER HIT HERE\n");
+  //  fprintf(stderr, "SHOULD NEVER HIT HERE\n");
 }

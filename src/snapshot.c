@@ -10,7 +10,7 @@
 #include "snapshot.h"  // defines
 #include "util.h"      // LOG
 
-#define DEBUG_SNAPSHOTS 0
+#define DEBUG_SNAPSHOTS 1
 #define STOP_WHEN_SNAPPING 0
 
 #define STEPS_SKIP 0
@@ -153,6 +153,14 @@ void restore_snapshot(pid_t pid, int TYPE) {
             ssize_t written = write_to_memory(pid, cur_snap_area->backing,
                                               cur_snap_area->original_address,
                                               cur_snap_area->size);
+            for (int i = 0; i < 10; i++) {
+                written = write_to_memory(pid, cur_snap_area->backing,
+                                          cur_snap_area->original_address,
+                                          cur_snap_area->size);
+                if (written == cur_snap_area->size) break;
+                LOG("did not write all bytes (%lu of %lu) retrying %d/10\n",
+                    written, cur_snap_area->size, i);
+            }
 #if DEBUG_SNAPSHOTS
             for (int x = 0; x < 64; x++) {
                 if (x % 8 == 0) fprintf(stderr, "\n");
@@ -160,6 +168,7 @@ void restore_snapshot(pid_t pid, int TYPE) {
             }
             fprintf(stderr, "\n\n");
 #endif
+            LOG("writing %ld bytes (%ld size)\n", written, cur_snap_area->size);
             CHECK((size_t)written != cur_snap_area->size,
                   "did not write expected amount of memory!\n");
         }

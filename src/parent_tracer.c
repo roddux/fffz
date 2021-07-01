@@ -136,10 +136,11 @@ int have_read_full_filesize(char *file_name, size_t bytes_read) {
         CHECK(ret == -1, "failed to stat() file\n");
         _full_fsz = (size_t)finfo.st_size;
     }
-    CHECK((_file_read + bytes_read > _full_fsz), "read more than filesize?\n");
+    // CHECK((_file_read + bytes_read > _full_fsz), "read more than
+    // filesize?\n");
     _file_read += bytes_read;
     LOG("have read %lu bytes of %lu\n", _file_read, _full_fsz);
-    if (_file_read == _full_fsz) {
+    if (_file_read >= _full_fsz) {
         return FILE_FINISHED;
     }
     return FILE_NOT_FINISHED;
@@ -299,8 +300,9 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                                                   // injected function
 
             LOG("snapshot restored\n");
-#if 0
-            LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
+#if 1
+            //        LOG("corrupting saved memory buffer (%p)\n", (void
+            //        *)buffer_addr);
             uint8_t *junk = malloc(_full_fsz * sizeof(uint8_t));
             read_from_memory(child_pid, junk, buffer_addr, _full_fsz);
             mutate(junk, _full_fsz, 2);

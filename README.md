@@ -65,7 +65,9 @@ MVP:
 [X]	- snapshot + restore mechanism using process_vm_readv/writev
 [X] - improve/fix snapshot logic to remove overfit to dummy target
 [X] - injected library to hook lseek and restore filedes offsets
-[>] - call library to restore filedes offsets
+[X] - call library to restore filedes offsets
+[>] - allow read_from/write_to_memory to operate on >128-page regions
+[ ] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
 
 FUTURE:
 [ ] - batch process_vm_readv/process_vm_writev calls

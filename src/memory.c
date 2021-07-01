@@ -10,45 +10,58 @@
 // clang-format on
 
 #include "util.h"  // LOG, CHECK
+
+#define DEBUG_MEMORY_READS 0
+#define DEBUG_MEMORY_WRITES 0
 ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
                          uint64_t size) {
     struct iovec local = {.iov_base = to, .iov_len = size};
     struct iovec *remotes;
 
+#if DEBUG_MEMORY_READS
     LOG("size is %lu\n", size);
-    if (size % 2 != 0) {
-        CHECK(1, "cannot deal with odd pages\n");
+#endif
+    if (size % 2 != 0 && size > 4096) {
+        CHECK(1, "cannot deal with big odd pages\n");
     }
 
     int count;
     if (size > 4096) {
+#if DEBUG_MEMORY_READS
         LOG("splitting iovecs\n");
+#endif
         count = size / 4096;
+        CHECK(count < 128, "memory region too large\n");
         remotes = malloc(sizeof(struct iovec) * count);
         struct iovec *cur;
         for (int i = 0; i < count; i++) {
             cur = &remotes[i];
             cur->iov_base = (void *)from + 4096 * i;
             cur->iov_len = 4096;
+#if DEBUG_MEMORY_READS
             LOG("iovec %d, from %p size %lu\n", i, cur->iov_base, cur->iov_len);
+#endif
         }
     } else {
         count = 1;
         remotes = malloc(sizeof(struct iovec) * count);
         remotes->iov_base = (void *)from;
         remotes->iov_len = size;
+#if DEBUG_MEMORY_READS
         LOG("iovec, from %p size %lu\n", remotes->iov_base, remotes->iov_len);
+#endif
     }
-    /*
-        ssize_t ret = process_vm_readv(pid,      // pid
-                                       &local,   // local iovec
-                                       1,        // liovcnt -> local iovec count
-                                       remotes,  // remote iovec
-                                       count,    // remote iovec count
-                                       0         // flags
-        );
-        CHECK(ret == -1, "failed to readv\n");
-    */
+
+    ssize_t ret = process_vm_readv(pid,      // pid
+                                   &local,   // local iovec
+                                   1,        // liovcnt -> local iovec count
+                                   remotes,  // remote iovec
+                                   count,    // remote iovec count
+                                   0         // flags
+    );
+    CHECK(ret == -1, "failed to readv\n");
+
+#if 0
     uint8_t *ptrace_buf = malloc(sizeof(uint8_t) * size);
     for (int x = 0; x < size; x += 2) {
         uint16_t data = ptrace(PTRACE_PEEKTEXT, pid, from + x, 0);
@@ -75,27 +88,68 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
     */
     // CHECK(memcmp(ptrace_buf, to, size) != 0, "buffer mismatch!\n");
     memcpy(to, ptrace_buf, size);
-
+#endif
     //    LOG("readv returned %d\n", ret);
-    return size;
-    // return ret;
+    // return size;
+    return ret;
 }
 
 ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
                         uint64_t size) {
     // LOG("writing %" PRIu64 " bytes from %p to %p\n", size, (void*)what,
     //    (void *)where);
-    struct iovec local = {.iov_base = what, .iov_len = size};
+    struct iovec *locals;  //= {.iov_base = what, .iov_len = size};
     struct iovec remote = {.iov_base = (void *)where, .iov_len = size};
+
+#if DEBUG_MEMORY_WRITES
+    LOG("size is %lu\n", size);
+#endif
+    if (size % 2 != 0 && size > 4096) {
+        CHECK(1, "cannot deal with big odd pages\n");
+    }
+
+    int count;
+    if (size > 4096) {
+#if DEBUG_MEMORY_WRITES
+        LOG("splitting iovecs\n");
+#endif
+        count = size / 4096;
+        CHECK(count < 128, "memory region too large\n");
+        locals = malloc(sizeof(struct iovec) * count);
+        struct iovec *cur;
+        for (int i = 0; i < count; i++) {
+            cur = &locals[i];
+            cur->iov_base = (void *)what + 4096 * i;
+            cur->iov_len = 4096;
+
+#if DEBUG_MEMORY_WRITES
+            LOG("iovec %d, what %p size %lu\n", i, cur->iov_base, cur->iov_len);
+#endif
+        }
+    } else {
+        count = 1;
+        locals = malloc(sizeof(struct iovec) * count);
+        locals->iov_base = (void *)what;
+        locals->iov_len = size;
+
+#if DEBUG_MEMORY_WRITES
+        LOG("iovec, what %p size %lu\n", locals->iov_base, locals->iov_len);
+#endif
+    }
+
     ssize_t ret = process_vm_writev(pid,      // pid
-                                    &local,   // local iovec
-                                    1,        // liovcnt -> local iovec count
+                                    locals,   // local iovec
+                                    count,    // liovcnt -> local iovec count
                                     &remote,  // remote iovec
                                     1,        // remote iovec count
                                     0         // flags
     );
 
+#if DEBUG_MEMORY_WRITES
+    LOG("wrote %lu bytes of %lu\n", ret, size);
+#endif
     CHECK(ret == -1, "writev returned -1\n");
     // LOG("writev returned %d\n", ret);
+
     return ret;
 }
