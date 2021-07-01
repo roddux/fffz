@@ -50,7 +50,7 @@ We restore the snapshot on `exit()`/`exit_group()` syscalls by using
 ./snapshot.c      : create and restore a process snapshot
 ./mutator.c       : basic mutators
 ./target.c        : example fuzzing target
-./imposer.co      : injected library providing hooks to help with snapshots
+./imposer.cpp     : injected library providing hooks to help with snapshots
 ```
 
 # TODO
@@ -66,8 +66,9 @@ MVP:
 [X] - improve/fix snapshot logic to remove overfit to dummy target
 [X] - injected library to hook lseek and restore filedes offsets
 [X] - call library to restore filedes offsets
-[>] - allow read_from/write_to_memory to operate on >128-page regions
-[ ] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
+[X] - allow read_from/write_to_memory to operate on >128-page regions
+[X] - call library to restore original pre-snapshot heap size
+[>] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
 
 FUTURE:
 [ ] - batch process_vm_readv/process_vm_writev calls

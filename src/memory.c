@@ -1,6 +1,7 @@
 #define __SRCFILE__ "memory"
 #include <errno.h>     // pid_t
 #include <inttypes.h>  // PRI*X
+#include <limits.h>    // IOV_MAX
 #include <stdint.h>    // uintx_t
 #include <sys/uio.h>   // process_vm_*
 #include <unistd.h>    // pid_t
@@ -10,8 +11,9 @@
 // clang-format on
 
 #include "util.h"  // LOG, CHECK
+#define CPSIZE (4096 * 2)
 
-#define DEBUG_MEMORY_READS 0
+#define DEBUG_MEMORY_READS 1
 #define DEBUG_MEMORY_WRITES 0
 ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
                          uint64_t size) {
@@ -21,23 +23,24 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
 #if DEBUG_MEMORY_READS
     LOG("size is %lu\n", size);
 #endif
-    if (size % 2 != 0 && size > 4096) {
+    if (size % 2 != 0 && size > CPSIZE) {
         CHECK(1, "cannot deal with big odd pages\n");
     }
 
     int count;
-    if (size > 4096) {
+    if (size > CPSIZE) {
 #if DEBUG_MEMORY_READS
         LOG("splitting iovecs\n");
 #endif
-        count = size / 4096;
-        CHECK(count < 128, "memory region too large\n");
+        count = size / CPSIZE;
+        //        CHECK(count > 128, "memory region too large\n");
+        if (count > IOV_MAX) count = IOV_MAX;
         remotes = malloc(sizeof(struct iovec) * count);
         struct iovec *cur;
         for (int i = 0; i < count; i++) {
             cur = &remotes[i];
-            cur->iov_base = (void *)from + 4096 * i;
-            cur->iov_len = 4096;
+            cur->iov_base = (void *)from + CPSIZE * i;
+            cur->iov_len = CPSIZE;
 #if DEBUG_MEMORY_READS
             LOG("iovec %d, from %p size %lu\n", i, cur->iov_base, cur->iov_len);
 #endif
@@ -89,8 +92,14 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
     // CHECK(memcmp(ptrace_buf, to, size) != 0, "buffer mismatch!\n");
     memcpy(to, ptrace_buf, size);
 #endif
-    //    LOG("readv returned %d\n", ret);
-    // return size;
+    LOG("readv returned %d\n", ret);
+    if (ret < size) {
+        LOG("re-calling read_from_memory with remaining unread bytes %lu\n",
+            size - ret);
+        ret +=
+            read_from_memory(pid, to + ret, from + ret, (uint64_t)size - ret);
+        // return size;
+    }
     return ret;
 }
 
@@ -102,28 +111,31 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
     struct iovec remote = {.iov_base = (void *)where, .iov_len = size};
 
 #if DEBUG_MEMORY_WRITES
-    LOG("size is %lu\n", size);
+    LOG("writing %lu bytes from %p to %p\n", size, what, where);
 #endif
-    if (size % 2 != 0 && size > 4096) {
+    if (size % 2 != 0 && size > CPSIZE) {
         CHECK(1, "cannot deal with big odd pages\n");
     }
 
     int count;
-    if (size > 4096) {
+    if (size > CPSIZE) {
 #if DEBUG_MEMORY_WRITES
         LOG("splitting iovecs\n");
 #endif
-        count = size / 4096;
-        CHECK(count < 128, "memory region too large\n");
+        count = size / CPSIZE;
+        if (count > IOV_MAX) count = IOV_MAX;
+        // CHECK(count > 128, "memory region too large\n");
+
         locals = malloc(sizeof(struct iovec) * count);
         struct iovec *cur;
         for (int i = 0; i < count; i++) {
             cur = &locals[i];
-            cur->iov_base = (void *)what + 4096 * i;
-            cur->iov_len = 4096;
+            cur->iov_base = (void *)what + CPSIZE * i;
+            cur->iov_len = CPSIZE;
 
 #if DEBUG_MEMORY_WRITES
-            LOG("iovec %d, what %p size %lu\n", i, cur->iov_base, cur->iov_len);
+            LOG("iovec %d, what %p size %lu to %p\n", i, cur->iov_base,
+                cur->iov_len, cur->iov_base);
 #endif
         }
     } else {
@@ -146,10 +158,17 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
     );
 
 #if DEBUG_MEMORY_WRITES
-    LOG("wrote %lu bytes of %lu\n", ret, size);
+    LOG("wrote %ld bytes of %lu\n", ret, size);
+    LOG("writev returned %ld\n", ret);
 #endif
     CHECK(ret == -1, "writev returned -1\n");
-    // LOG("writev returned %d\n", ret);
+
+    if (ret < size) {
+        LOG("re-calling write_to_memory with remaining unread bytes %lu\n",
+            size - ret);
+        ret += write_to_memory(pid, what + ret, where + ret, size - ret);
+    }
+    CHECK(ret == -1, "writev returned -1\n");
 
     return ret;
 }

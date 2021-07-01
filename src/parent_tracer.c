@@ -40,6 +40,10 @@ char bad_paths[BLACKLIST_LENGTH][7] = {
 #define PATH_ON_BLACKLIST 1
 #define PATH_NOT_ON_BLACKLIST 0
 
+#define DEBUG_SIGNALS 0
+
+uint8_t *current_testcase;
+
 int is_path_blacklisted(char *path) {
     for (int x = 0; x < BLACKLIST_LENGTH;
          x++) {  // check if path is blacklisted
@@ -153,6 +157,7 @@ char *file_name = NULL;
 int16_t file_fd = -1;
 uintptr_t buffer_addr;
 
+extern process_snapshot *snap;
 void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     uint8_t reason) {
     char tmp_path[256];
@@ -211,15 +216,66 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
     if (reason == PTRACE_SYSCALL_INFO_EXIT) {
         //        LOG("leaving syscall %s(...)\n", syscall_names[last_syscall]);
         if (last_syscall == __NR_exit || last_syscall == __NR_exit_group) {
+            // TODO: this needs a serious code tidy, most of this should live in
+            // snapshot.c tbh
+
+            int status;
+            LOG("about to call restore_heap_size in child proc...\n");
+            map_list *lst = get_maps_for_pid(child_pid, PERM_X);
+            uintptr_t base_address = get_base_addr_for_page("imposer.so", lst);
+            free(lst);
+            struct user_regs_struct check_regs;
+            uintptr_t x = base_address + _restore_heap_size_function_address -
+                          _base_address_offset;
+            LOG("boutta getregs\n");
+            CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
+            check_regs.rip = x;
+            check_regs.rdi = snap->original_heap_size;
+            LOG("aboutta setregs\n");
+            CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
+#if 0
+            LOG("setregs done, about to single-step\n");
+            // lets check if the memory at this address looks like what we want
+            // ...
+            uint8_t *buf = malloc(128 * sizeof(uint8_t));
+            LOG("dumping 128 bytes from : %p\n", x);
+            read_from_memory(child_pid, buf, x, 128);
+            for (int i = 0; i < 128; i++) {
+                if (i % 8 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "0x%02x ", buf[i]);
+            }
+            fprintf(stderr, "\n\n");
+#endif
+
+            // continue until we hit the int3 in interposer
+            LOG("continuing child (to run our injected func)\n");
+
+            for (;;) {
+                CHECKP(ptrace(PTRACE_CONT, child_pid, NULL, NULL) == -1);
+                waitpid(child_pid, &status, 0);
+
+                if (WIFEXITED(status)) {
+                    LOG("Exit status %d\n", WEXITSTATUS(status));
+                } else if (WIFSIGNALED(status)) {
+                    LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
+                        strsignal(WTERMSIG(status)),
+                        WCOREDUMP(status) ? " (core dumped)" : "");
+                } else if (WIFCONTINUED(status)) {
+                    LOG("Continued\n");
+                } else if (WIFSTOPPED(status)) {
+                    LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
+                        strsignal(WSTOPSIG(status)));
+                    if (WSTOPSIG(status) == SIGTRAP) break;
+                }
+            }
+
+            LOG("now we can restore! anybody can frob\n");
+
             restore_snapshot(child_pid, RESTORE_MEMORY);
             // restore memory to get us back to the saved fil offsets in our
             // injected library restore filedes offsets by calling our injected
             // function
             LOG("restoring filedescriptor offsets\n");
-
-            map_list *lst = get_maps_for_pid(child_pid, PERM_X);
-            uintptr_t base_address = get_base_addr_for_page("imposer.so", lst);
-            free(lst);
 
 #if 0
             LOG("  base: %p\n", base_address);
@@ -230,12 +286,8 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
 
             // overwrite current RIP with address of $restore_offsets
             // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
-            struct user_regs_struct check_regs;
-            uintptr_t x = base_address + _restore_offsets_function_address -
-                          0x5000;  // TODO: this is hacked in because we need to
-                                   // account for the offset in the file that
-                                   // the executable area is loaded
-            // tl;dr, fixup the readelf header script
+            x = base_address + _restore_offsets_function_address -
+                _base_address_offset;
             LOG("boutta getregs\n");
             CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
             check_regs.rip = x;
@@ -255,7 +307,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             }
             fprintf(stderr, "\n\n");
 #endif
-            int status;
 #if 0
             //            CHECK(1, "exit\n");
 //            parent_debug_regs_singlestep(child_pid, 5);
@@ -293,6 +344,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             }
 
             LOG("back in control!\n");
+
             restore_snapshot(child_pid, RESTORE_MEMORY);
 
             restore_snapshot(child_pid,
@@ -301,13 +353,18 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
 
             LOG("snapshot restored\n");
 #if 1
-            //        LOG("corrupting saved memory buffer (%p)\n", (void
-            //        *)buffer_addr);
-            uint8_t *junk = malloc(_full_fsz * sizeof(uint8_t));
-            read_from_memory(child_pid, junk, buffer_addr, _full_fsz);
-            mutate(junk, _full_fsz, 2);
-            write_to_memory(child_pid, (uint8_t *)junk, buffer_addr, _full_fsz);
-            free(junk);
+            LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
+            free(current_testcase);
+            current_testcase = malloc(_full_fsz * sizeof(uint8_t));
+            read_from_memory(child_pid, current_testcase, buffer_addr,
+                             _full_fsz);
+            mutate(current_testcase, _full_fsz, 2);
+            write_to_memory(child_pid, (uint8_t *)current_testcase, buffer_addr,
+                            _full_fsz);
+            for (int i = 0; i < _full_fsz; i++) {
+                if (i % 8 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "0x%02x ", current_testcase[i]);
+            }
 #endif
         }
         if (last_syscall == __NR_openat) {
@@ -416,19 +473,24 @@ void parent_action(pid_t child_pid) {
                 fprintf(stderr, "\n\n");
                 map_list *lst = get_maps_for_pid(child_pid, PERM_RW);
                 uintptr_t stack = get_base_addr_for_page("stack", lst);
-                free(lst);
                 LOG("dumping 128 bytes from stack: %p\n", stack);
                 read_from_memory(child_pid, buf, stack, 128);
                 for (int i = 0; i < 128; i++) {
                     if (i % 8 == 0) fprintf(stderr, "\n");
                     fprintf(stderr, "0x%02x ", buf[i]);
                 }
-                getchar();
+
+                LOG("dumping file data to output file 'out.bin'\n");
+                FILE *fp = fopen("out.bin", "w");
+                fwrite(current_testcase, 1, _full_fsz, fp);
+                fclose(fp);
                 break;
             }
 
+#if DEBUG_SIGNALS
             LOG("child has stopped with signal %s (%d)\n",
                 signal_names[WSTOPSIG(status)], WSTOPSIG(status));
+#endif
         }
 
         // if not stopped by a syscall, skip it

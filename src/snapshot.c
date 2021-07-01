@@ -10,24 +10,11 @@
 #include "snapshot.h"  // defines
 #include "util.h"      // LOG
 
-#define DEBUG_SNAPSHOTS 1
+#define DEBUG_SNAPSHOTS 0
 #define STOP_WHEN_SNAPPING 0
 
 #define STEPS_SKIP 0
-#define DEBUG_STEPS 1024  // we want to get up to 726/727
-
-typedef struct snapshot_area {
-    uintptr_t original_address;
-    uint64_t size;
-    uint8_t *backing;
-} snapshot_area;
-
-typedef struct process_snapshot {
-    uint64_t area_count;
-    snapshot_area *memory_stores;
-    struct user_regs_struct regs;
-    struct user_fpregs_struct fpregs;
-} process_snapshot;
+#define DEBUG_STEPS 0  // we want to get up to 726/727
 
 uint64_t SNAPS = 10;
 process_snapshot *snap = NULL;
@@ -69,6 +56,10 @@ void save_snapshot(pid_t pid) {
         cur_snap_area->size = sz;
         cur_snap_area->original_address = orig_addr;
 
+        if (strcmp(cur_map_entry->path, "[heap]") == 0) {
+            LOG("saving original heap size as %p\n", cur_map_entry->end);
+            snap->original_heap_size = cur_map_entry->end;
+        }
         uint8_t *buf = malloc(sizeof(uint8_t) * sz);
         memset(buf, 0, sizeof(uint8_t) * sz);
         cur_snap_area->backing = buf;
@@ -88,6 +79,7 @@ void save_snapshot(pid_t pid) {
         }
         fprintf(stderr, "\n\n");
 #endif
+        LOG("size_t read is %lu, sz is %lu\n", read, sz);
         CHECK((size_t)read != sz, "did not read expected amount of memory!\n");
     }
     LOG("saving registers\n");
@@ -108,6 +100,7 @@ void save_snapshot(pid_t pid) {
 void restore_snapshot(pid_t pid, int TYPE) {
     CHECK(snap == NULL, "snapshot is null! none taken??\n");
     LOG("restoring snapshot of pid %d\n", pid);
+
 #if 1
     LOG("at snapshot restore, saved RIP is %p\n",
         (void *)snap->regs.rip);  // assuming 64-bit
@@ -119,36 +112,27 @@ void restore_snapshot(pid_t pid, int TYPE) {
 #endif
 
     if (TYPE == RESTORE_MEMORY || TYPE == RESTORE_BOTH) {
-        map_list *list = get_maps_for_pid(pid, PERM_RW);
-        map_entry **entry_list = list->entries;
-        map_entry *cur_map_entry;
         snapshot_area *cur_snap_area;
         // TODO: batch these into a single process_vm_writev
-        for (size_t j = 0; j < list->len; j++) {
-            cur_map_entry = entry_list[j];
+        for (size_t j = 0; j < snap->area_count; j++) {
             cur_snap_area = &snap->memory_stores[j];
             //        LOG("snap->memory_stores is at %p\n",
             //        snap->memory_stores); LOG("snap->memory_stores[j] is at
             //        %p\n", &snap->memory_stores[j]); LOG("cur_snap_area is at
             //        %p\n", cur_snap_area);
 
-            if (strcmp(cur_map_entry->path, "[vvar]") == 0 ||
-                strcmp(cur_map_entry->path, "[vsyscall]") == 0 ||
-                strcmp(cur_map_entry->path, "[vdso]") == 0) {
-                //            LOG("skipping region %s\n", cur_map_entry->path);
-                continue;
-            }
-
 #if DEBUG_SNAPSHOTS
-            LOG("page: %s : %p : %s\n", cur_map_entry->path,
-                (void *)cur_map_entry->start, cur_map_entry->perms);
-            LOG("writing region %s[%p-%p, %lu] from snapshot\n(%lu bytes, from "
-                "%p "
-                "to %p)\n",
-                cur_map_entry->path, (void *)cur_map_entry->start,
-                (void *)cur_map_entry->end, cur_snap_area->size,
-                cur_snap_area->size, (void *)cur_snap_area->backing,
-                (void *)cur_snap_area->original_address);
+            LOG("writing %ld bytes\n", cur_snap_area->size);
+            //            LOG("page: %s : %p : %s\n", cur_map_entry->path,
+            /*              (void *)cur_map_entry->start, cur_map_entry->perms);
+                      LOG("writing region %s[%p-%p, %lu] from snapshot\n(%lu
+               bytes, from "
+                          "%p "
+                          "to %p)\n",
+                          cur_map_entry->path, (void *)cur_map_entry->start,
+                          (void *)cur_map_entry->end, cur_snap_area->size,
+                          cur_snap_area->size, (void *)cur_snap_area->backing,
+                          (void *)cur_snap_area->original_address);*/
 #endif
             ssize_t written = write_to_memory(pid, cur_snap_area->backing,
                                               cur_snap_area->original_address,
@@ -168,7 +152,6 @@ void restore_snapshot(pid_t pid, int TYPE) {
             }
             fprintf(stderr, "\n\n");
 #endif
-            LOG("writing %ld bytes (%ld size)\n", written, cur_snap_area->size);
             CHECK((size_t)written != cur_snap_area->size,
                   "did not write expected amount of memory!\n");
         }
