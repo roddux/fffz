@@ -2,6 +2,9 @@
 # forget trying to do this in a Makefile
 mkdir gen || true
 
+# incl
+echo "#include <stdint.h>" > gen/imposer_offset_header.h
+
 # restore_offsets
 (
     echo -n "uintptr_t _restore_offsets_function_address = 0x";
@@ -9,7 +12,7 @@ mkdir gen || true
     awk '/restore_offsets/{print $2}'|\
     tr '\n' ';';
     echo;
-) > gen/imposer_offset_header.h
+) >> gen/imposer_offset_header.h
 
 # restore_heap_size
 (

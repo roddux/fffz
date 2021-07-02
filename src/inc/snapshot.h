@@ -1,3 +1,5 @@
+#include <stdint.h>
+#include <sys/user.h>
 #include <unistd.h>
 #define NO_SNAPSHOT 0
 #define HAVE_SNAPSHOT 1

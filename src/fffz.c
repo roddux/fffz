@@ -41,9 +41,12 @@ int main(int argc, char **argv) {
 
     // Tell user what we're doing
     char prog[512];  // OH NO a static buffer, sue me
-    for (int i = 1; i < argc;
-         strcat((char *)&prog, argv[i++]), strcat((char *)&prog, " "))
-        ;
+    for (int i = 1; i < argc; i++) {
+        // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+        strncat((char *)&prog, argv[i], 511);
+        // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+        strncat((char *)&prog, " ", 511);
+    }
     LOG("fuzzing program: %s\n", prog);
 
     // argv+1 to skip first argument (aka, us)

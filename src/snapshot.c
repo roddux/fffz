@@ -10,33 +10,31 @@
 #include "snapshot.h"  // defines
 #include "util.h"      // LOG
 
-#define DEBUG_SNAPSHOTS 0
-#define STOP_WHEN_SNAPPING 0
-
-#define STEPS_SKIP 0
-#define DEBUG_STEPS 0  // we want to get up to 726/727
-
 uint64_t SNAPS = 10;
 process_snapshot *snap = NULL;
 void save_snapshot(pid_t pid) {
     CHECK(snap != NULL, "save_snapshot called when we already have one!\n");
     LOG("saving snapshot of pid %d\n", pid);
-#if STOP_WHEN_SNAPPING
+#if DEBUG_STOP_WHEN_SNAPPING
     LOG("before snapshot save\n");
     getchar();
 #endif
+    LOG("get maps\n");
     map_list *list = get_maps_for_pid(pid, PERM_RW);
-    // print_list(list);
-    map_entry **entry_list = list->entries;
+    LOG("print list\n");
+    print_list(list);
+    map_entry *entry_list = list->entries;
     map_entry *cur_map_entry;
 
+    LOG("malloc\n");
     snap = malloc(sizeof(process_snapshot));
     snap->area_count = list->len;
     snap->memory_stores = malloc(sizeof(snapshot_area) * snap->area_count);
     //    LOG("memory_stores is %p\n", snap->memory_stores);
     snapshot_area *cur_snap_area;
+    LOG("loop\n");
     for (size_t j = 0; j < list->len; j++) {
-        cur_map_entry = entry_list[j];
+        cur_map_entry = &entry_list[j];
         cur_snap_area = &snap->memory_stores[j];
 #if DEBUG_SNAPSHOTS
         LOG("snap->memory_stores is at %p\n", snap->memory_stores);
@@ -57,10 +55,12 @@ void save_snapshot(pid_t pid) {
         cur_snap_area->original_address = orig_addr;
 
         if (strcmp(cur_map_entry->path, "[heap]") == 0) {
-            LOG("saving original heap size as %p\n", cur_map_entry->end);
+            LOG("saving original heap size as %p\n",
+                (void *)cur_map_entry->end);
             snap->original_heap_size = cur_map_entry->end;
         }
         uint8_t *buf = malloc(sizeof(uint8_t) * sz);
+        // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
         memset(buf, 0, sizeof(uint8_t) * sz);
         cur_snap_area->backing = buf;
         CHECK(buf == NULL, "could not allocate space for snapshot\n");
@@ -89,7 +89,7 @@ void save_snapshot(pid_t pid) {
         (void *)snap->regs.rip);  // assuming 64-bit
     ret = ptrace(PTRACE_GETFPREGS, pid, NULL, &snap->fpregs);
     CHECK(ret == -1, "failed to get fp registers\n");
-#if STOP_WHEN_SNAPPING
+#if DEBUG_STOP_WHEN_SNAPPING
     LOG("after snapshot save\n");
     getchar();
     debug_regs_singlestep(pid, DEBUG_STEPS);
@@ -106,7 +106,7 @@ void restore_snapshot(pid_t pid, int TYPE) {
         (void *)snap->regs.rip);  // assuming 64-bit
 //    CHECK(SNAPS++ == 1, "2 runs completed\n");
 #endif
-#if STOP_WHEN_SNAPPING
+#if DEBUG_STOP_WHEN_SNAPPING
     LOG("before restore\n");
     getchar();
 #endif
@@ -141,7 +141,7 @@ void restore_snapshot(pid_t pid, int TYPE) {
                 written = write_to_memory(pid, cur_snap_area->backing,
                                           cur_snap_area->original_address,
                                           cur_snap_area->size);
-                if (written == cur_snap_area->size) break;
+                if (written == (ssize_t)cur_snap_area->size) break;
                 LOG("did not write all bytes (%lu of %lu) retrying %d/10\n",
                     written, cur_snap_area->size, i);
             }
@@ -165,9 +165,9 @@ void restore_snapshot(pid_t pid, int TYPE) {
         struct user_regs_struct check_regs;
         ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
         CHECK(ret == -1, "failed to get registers\n");
-        LOG("new RIP: %p\n", check_regs.rip);
+        LOG("new RIP: %p\n", (void *)check_regs.rip);
     }
-#if STOP_WHEN_SNAPPING
+#if DEBUG_STOP_WHEN_SNAPPING
     LOG("after restore\n");
     getchar();
     debug_regs_singlestep(pid, DEBUG_STEPS);
@@ -179,7 +179,6 @@ int have_snapshot() {
     return HAVE_SNAPSHOT;
 }
 
-#if DEBUG_STEPS  // stop the compiler moaning if STEPS_SKIP is 0
 void debug_regs_singlestep(pid_t pid, uint64_t steps) {
     map_list *list = get_maps_for_pid(pid, PERM_RW);
     print_list(list);
@@ -189,7 +188,7 @@ void debug_regs_singlestep(pid_t pid, uint64_t steps) {
         CHECK(ret == -1, "failed to singlestep\n");
         int status;
         waitpid(pid, &status, 0);
-        if (_ < STEPS_SKIP) continue;
+        if (_ < DEBUG_STEPS_SKIP) continue;
         if (WIFSTOPPED(status)) {
             ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
             CHECK(ret == -1, "failed to check registers\n");
@@ -209,7 +208,6 @@ void debug_regs_singlestep(pid_t pid, uint64_t steps) {
         }
     }
 }
-#endif
 
 #if 0
 void dump_snapshot_info() {

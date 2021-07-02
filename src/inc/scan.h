@@ -10,7 +10,7 @@ typedef struct map_entry {
 } map_entry;
 
 typedef struct map_list {
-    map_entry **entries;
+    map_entry *entries;
     size_t len;
 } map_list;
 

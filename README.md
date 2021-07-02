@@ -1,7 +1,8 @@
-# FunkyFunFuzzer / FFFZ
+# FunkyFunFuzzer / fffz
 
-FunkyFunFuzzer / fffz is an attempt to create a super easy-to-use file fuzzer,
-with decent real-world performance.
+FunkyFunFuzzer / fffz is an attempt at a file fuzzer prioritising usability
+thile maintaining decent real-world performance. It is a mutation fuzzer with
+automatic process snapshotting.
 
 ## Usage
 Add `fffz` to the start of any command that takes a file as input. Should(tm)
@@ -24,12 +25,13 @@ the target is supposed to be operating on. i.e., we assume the target file is
 present in the argument list. We skip paths like `/etc/` and `/lib/` and assume
 that the path that matches one of the command-line arguments is the input.
 
-When we have determined that the last `read()` has been performed on the input
-file _(by calling `fstat()` on the file descriptor ourselves to determine
-filesize)_, we take a snapshot of the process using `process_vm_readv()` using
+When we have determined that a `read()` has been called on the target input
+file, we take a snapshot of the process using `process_vm_readv()` using
 memory map information from `/proc/pid/maps`. We also save file descriptor
-offsets by using an injected libary to hook `lseek()` and storing the offsets
-in memory.
+offsets for all files by using an injected libary to hook `lseek()` and storing
+the offsets in memory.
+
+`fffz` will then mutate the data in the read() buffer.
 
 We restore the snapshot on `exit()`/`exit_group()` syscalls by using
 `process_vm_writev()`, and forcing the target program to call our injected
@@ -37,9 +39,7 @@ We restore the snapshot on `exit()`/`exit_group()` syscalls by using
 
 # Assumptions
 - system is x86-64, and all binaries involved are 64-bit
-- target program reads input file into one contiguous buffer
-- target program reads input file from beginning to end without `seek()`ing to
-  weird offsets
+- target program doesn't rely on uncaptured external state (sockets, mutexes)
 
 # Files
 ```text
@@ -53,6 +53,11 @@ We restore the snapshot on `exit()`/`exit_group()` syscalls by using
 ./imposer.cpp     : injected library providing hooks to help with snapshots
 ```
 
+it might be easier to fuzz on every read() to the target file... we could copy
+each read() to our own buffer, to be able to save the testcase off after?
+
+would have to put the first snapshot at the start of the first read.
+
 # TODO
 ```text
 MVP:
@@ -64,18 +69,21 @@ MVP:
 [X] - implement super basic is-it-time-to-snapshot-yet logic
 [X]	- snapshot + restore mechanism using process_vm_readv/writev
 [X] - improve/fix snapshot logic to remove overfit to dummy target
-[X] - injected library to hook lseek and restore filedes offsets
+[X] - implement an injector library to hook lseek and restore filedes offsets
 [X] - call library to restore filedes offsets
-[X] - allow read_from/write_to_memory to operate on >128-page regions
+[X] - allow read_from/write_to_memory to operate on larger memory regions
+[X] - modify proc/pid/map scanner to only return readable/writeable pages
 [X] - call library to restore original pre-snapshot heap size
-[>] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
+[>] - rearchitect to snapshot at start of first read() from target file
+[ ] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
+[ ] - massive code-tidy, make logging more consistent
+[ ] - catch SIGTERM in parent to cleanly kill target
 
 FUTURE:
 [ ] - batch process_vm_readv/process_vm_writev calls
-[ ] - modify proc/pid/map scanner to only return readable/writeable pages
 [ ] - modify snapshotting to only restore dirty pages
-[ ] - collect edge/bb coverage information from target process
-[ ] - handle read in userspace with PTRACE_SYSEMU for fewer context switches
-[ ] - hook fstat so we can provide process a buffer of arbitrary size
+[ ] - collect edge/basic-block coverage information from target process
+[ ] - handle reads in userspace with PTRACE_SYSEMU for fewer context switches?
+[ ] - hook fstat so we can provide the target a buffer of arbitrary size
 [ ] - automagic multi-threading (?)
 ```

@@ -1,154 +1,33 @@
 #define __SRCFILE__ "parent_tracer"
 #include <inttypes.h>
 #include <signal.h>
-
 // clang-format off
 #include <sys/ptrace.h>    // this needs to come first, clang-format breaks it
 #include <linux/ptrace.h>  // ptrace_syscall_info
 // clang-format on
-
 #include <byteswap.h>
-#include <dirent.h>  // readdir
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>    // strncmp
-#include <sys/stat.h>  // stat
+#include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/user.h>
 #include <sys/wait.h>
-#include <syscall.h>  // syscall defines
+#include <syscall.h>
 #include <unistd.h>
-#include <unistd.h>  // readlink
 
 #include "imposer_offset_header.h"
 #include "memory.h"
 #include "mutator.h"
-#include "scan.h"  // /proc/X/maps stuff
+#include "scan.h"
 #include "snapshot.h"
-#include "util.h"  // CHECK and LOG
+#include "util.h"
 
 extern char syscall_names[][23];
 extern char signal_names[][14];
-
-#define BLACKLIST_LENGTH 6
-char bad_paths[BLACKLIST_LENGTH][7] = {
-    "/dev\0\0\0", "/etc\0\0\0", "/usr\0\0\0",
-    "/sys\0\0\0", "/proc\0\0",  "pipe:[\0",
-};
-#define PATH_ON_BLACKLIST 1
-#define PATH_NOT_ON_BLACKLIST 0
-
-#define DEBUG_SIGNALS 0
-
 uint8_t *current_testcase;
-
-int is_path_blacklisted(char *path) {
-    for (int x = 0; x < BLACKLIST_LENGTH;
-         x++) {  // check if path is blacklisted
-        int found = strncmp(path, bad_paths[x],
-                            strlen(bad_paths[x]));  // assumes path is >6
-        if (found == 0) return PATH_ON_BLACKLIST;
-    }
-    return PATH_NOT_ON_BLACKLIST;
-}
-
-void print_syscall(struct ptrace_syscall_info *syzinfo) {
-    char argz[512];
-    switch (syzinfo->entry.nr) {
-        case __NR_openat:
-            goto print5args;
-        case __NR_lseek:
-            goto print3args;
-        case __NR_read:
-            goto print4args;
-        default:
-            goto print1arg;
-    }
-print6args:
-    sprintf((char *)&argz, "%s(%llx, %llx, %llx, %llx, %llx, %llx)\n",
-            syscall_names[syzinfo->entry.nr], syzinfo->entry.args[0],
-            syzinfo->entry.args[1], syzinfo->entry.args[2],
-            syzinfo->entry.args[3], syzinfo->entry.args[4],
-            syzinfo->entry.args[5]);
-    goto out;
-print5args:
-    sprintf((char *)&argz, "%s(%llx, %llx, %llx, %llx, %llx)\n",
-            syscall_names[syzinfo->entry.nr], syzinfo->entry.args[0],
-            syzinfo->entry.args[1], syzinfo->entry.args[2],
-            syzinfo->entry.args[3], syzinfo->entry.args[4]);
-    goto out;
-print4args:
-    sprintf((char *)&argz, "%s(%llx, %llx, %llx, %llx)\n",
-            syscall_names[syzinfo->entry.nr], syzinfo->entry.args[0],
-            syzinfo->entry.args[1], syzinfo->entry.args[2],
-            syzinfo->entry.args[3]);
-    goto out;
-print3args:
-    sprintf((char *)&argz, "%s(%llx, %llx, %llx)\n",
-            syscall_names[syzinfo->entry.nr], syzinfo->entry.args[0],
-            syzinfo->entry.args[1], syzinfo->entry.args[2]);
-    goto out;
-print2args:
-    sprintf((char *)&argz, "%s(%llx, %llx)\n", syscall_names[syzinfo->entry.nr],
-            syzinfo->entry.args[0], syzinfo->entry.args[1]);
-    goto out;
-print1arg:
-    sprintf((char *)&argz, "%s(...)\n", syscall_names[syzinfo->entry.nr]);
-    goto out;
-out:
-    LOG("%s", argz);
-    return;
-}
-
-extern char **g_argv;
-extern int g_argc;
-#define PATH_IS_MATCH 1
-#define PATH_NO_MATCH 0
-int path_matches_arguments(char *path) {
-    // the g_arg? globals live in fffz.c and are set by main()
-    // LOG("found %d global arguments\n", g_argc);
-    // LOG("will now check for '%s'\n", path);
-    for (uint8_t i = 0; i < g_argc; i++) {
-        if (strlen(path) == strlen(g_argv[i])) {
-            goto length_checks_out;
-        }
-    }
-    return PATH_NO_MATCH;
-length_checks_out:
-    for (uint8_t i = 0; i < g_argc; i++) {
-        uint8_t shortest =
-            strlen(g_argv[i]) > strlen(path) ? strlen(path) : strlen(g_argv[i]);
-        // LOG("arg[%d]: %s\n", i, g_argv[i]);
-        if (strncmp(path, g_argv[i], shortest) == 0) {
-            return PATH_IS_MATCH;
-        }
-    }
-    return PATH_NO_MATCH;
-}
-
-#define FILE_FINISHED 1
-#define FILE_NOT_FINISHED 0
-// TODO: this is NOT re-entrant, we use global state
-size_t _full_fsz = 0;
-size_t _file_read = 0;
-int have_read_full_filesize(char *file_name, size_t bytes_read) {
-    if (_full_fsz == 0) {
-        struct stat finfo;
-        int ret = stat(file_name, &finfo);
-        CHECK(ret == -1, "failed to stat() file\n");
-        _full_fsz = (size_t)finfo.st_size;
-    }
-    // CHECK((_file_read + bytes_read > _full_fsz), "read more than
-    // filesize?\n");
-    _file_read += bytes_read;
-    LOG("have read %lu bytes of %lu\n", _file_read, _full_fsz);
-    if (_file_read >= _full_fsz) {
-        return FILE_FINISHED;
-    }
-    return FILE_NOT_FINISHED;
-}
 
 // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
 //   kernel: %rdi, %rsi, %rdx, %r10, %r8 and %r9
@@ -157,7 +36,7 @@ char *file_name = NULL;
 int16_t file_fd = -1;
 uintptr_t buffer_addr;
 
-extern process_snapshot *snap;
+extern process_snapshot *snap;  // TODO: separate
 void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     uint8_t reason) {
     char tmp_path[256];
@@ -180,7 +59,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 read_from_memory(child_pid, (uint8_t *)&tmp_path,
                                  syzinfo->entry.args[1], 256);  // read path
                 tmp_path[strnlen(tmp_path, 256)] = 0;
-                //                LOG("open('%s', ...)\n", tmp_path);
                 if (is_path_blacklisted(tmp_path) == PATH_NOT_ON_BLACKLIST) {
                     if (path_matches_arguments(tmp_path) == PATH_IS_MATCH) {
                         if (file_name == NULL) {
@@ -191,6 +69,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                         }
                     }
                 }
+                // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
                 memset(&tmp_path, 0, 256);
                 break;
             case __NR_read:
@@ -233,19 +112,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             check_regs.rdi = snap->original_heap_size;
             LOG("aboutta setregs\n");
             CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
-#if 0
-            LOG("setregs done, about to single-step\n");
-            // lets check if the memory at this address looks like what we want
-            // ...
-            uint8_t *buf = malloc(128 * sizeof(uint8_t));
-            LOG("dumping 128 bytes from : %p\n", x);
-            read_from_memory(child_pid, buf, x, 128);
-            for (int i = 0; i < 128; i++) {
-                if (i % 8 == 0) fprintf(stderr, "\n");
-                fprintf(stderr, "0x%02x ", buf[i]);
-            }
-            fprintf(stderr, "\n\n");
-#endif
 
             // continue until we hit the int3 in interposer
             LOG("continuing child (to run our injected func)\n");
@@ -266,6 +132,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
                         strsignal(WSTOPSIG(status)));
                     if (WSTOPSIG(status) == SIGTRAP) break;
+                    if (WSTOPSIG(status) == SIGSEGV) break;
                 }
             }
 
@@ -277,13 +144,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             // function
             LOG("restoring filedescriptor offsets\n");
 
-#if 0
-            LOG("  base: %p\n", base_address);
-            LOG("offset: %p\n", _restore_offsets_function_address);
-            LOG("  func: %p\n",
-                base_address + _restore_offsets_function_address);
-#endif
-
             // overwrite current RIP with address of $restore_offsets
             // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
             x = base_address + _restore_offsets_function_address -
@@ -294,37 +154,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             LOG("aboutta setregs\n");
             CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
 
-#if 0
-            LOG("setregs done, about to single-step\n");
-            // lets check if the memory at this address looks like what we want
-            // ...
-            uint8_t *buf = malloc(128 * sizeof(uint8_t));
-            LOG("dumping 128 bytes from : %p\n", x);
-            read_from_memory(child_pid, buf, x, 128);
-            for (int i = 0; i < 128; i++) {
-                if (i % 8 == 0) fprintf(stderr, "\n");
-                fprintf(stderr, "0x%02x ", buf[i]);
-            }
-            fprintf(stderr, "\n\n");
-#endif
-#if 0
-            //            CHECK(1, "exit\n");
-//            parent_debug_regs_singlestep(child_pid, 5);
-//            return;
-
-            CHECKP(ptrace(PTRACE_SINGLESTEP, child_pid, NULL, NULL) == -1);
-            LOG("singlestep done, about to getregs\n");
-            waitpid(child_pid, &status, 0);
-            CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
-
-            LOG("rip: %" PRIx64 "\nrdi: %" PRIx64 "\nrsi: %" PRIx64
-                "\nrdx: %" PRIx64 "\nr10: %" PRIx64 "\n r8: %" PRIx64
-                "\n r9: %" PRIx64 "\n cs: %" PRIx64 "\n eflags: %" PRIx64
-                "\n rbx: %" PRIx64 "\n rbp: %" PRIx64 "\n",
-                check_regs.rip, check_regs.rdi, check_regs.rsi, check_regs.rdx,
-                check_regs.r10, check_regs.r8, check_regs.r9, check_regs.cs,
-                check_regs.eflags, check_regs.rbx, check_regs.rbp);
-#endif
             // continue until we hit the int3 in interposer
             LOG("continuing child (to run our injected func)\n");
             CHECKP(ptrace(PTRACE_CONT, child_pid, NULL, NULL) == -1);
@@ -352,7 +181,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                                                   // injected function
 
             LOG("snapshot restored\n");
-#if 1
+#if 0
             LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
             free(current_testcase);
             current_testcase = malloc(_full_fsz * sizeof(uint8_t));
@@ -361,10 +190,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             mutate(current_testcase, _full_fsz, 2);
             write_to_memory(child_pid, (uint8_t *)current_testcase, buffer_addr,
                             _full_fsz);
-            for (int i = 0; i < _full_fsz; i++) {
-                if (i % 8 == 0) fprintf(stderr, "\n");
-                fprintf(stderr, "0x%02x ", current_testcase[i]);
-            }
 #endif
         }
         if (last_syscall == __NR_openat) {
@@ -385,49 +210,6 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     // dump_snapshot_info();
                 }
             }
-        }
-    }
-}
-
-void parent_debug_regs_singlestep(pid_t pid, uint64_t steps) {
-    struct user_regs_struct check_regs;
-    for (uint64_t _ = 0; _ < steps; _++) {
-        int ret = ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL);
-        CHECK(ret == -1, "failed to singlestep\n");
-        int status;
-        waitpid(pid, &status, 0);
-
-        if (WIFEXITED(status)) {
-            LOG("Exit status %d\n", WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
-                strsignal(WTERMSIG(status)),
-                WCOREDUMP(status) ? " (core dumped)" : "");
-        } else if (WIFCONTINUED(status)) {
-            LOG("Continued\n");
-        } else if (WIFSTOPPED(status)) {
-            LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
-                strsignal(WSTOPSIG(status)));
-        }
-
-        if (WIFSTOPPED(status)) {
-            ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
-            CHECK(ret == -1, "failed to check registers\n");
-            // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
-            //   kernel: %rdi, %rsi, %rdx, %r10, %r8 and %r9
-            LOG("step %d: rip=%" PRIx64 "\n", _, check_regs.rip);
-            /*
-            LOG("step %d\nrip: %" PRIx64 "\nrdi: %" PRIx64 "\nrsi: %" PRIx64
-                "\nrdx: %" PRIx64 "\nr10: %" PRIx64 "\n r8: %" PRIx64
-                "\n r9: %" PRIx64 "\n cs: %" PRIx64 "\n eflags: %" PRIx64
-                "\n rbx: %" PRIx64 "\n rbp: %" PRIx64 "\n",
-                _, check_regs.rip, check_regs.rdi, check_regs.rsi,
-                check_regs.rdx, check_regs.r10, check_regs.r8, check_regs.r9,
-                check_regs.cs, check_regs.eflags, check_regs.rbx,
-                check_regs.rbp);*/
-
-        } else {
-            CHECK(1, "oops\n");
         }
     }
 }
@@ -464,7 +246,8 @@ void parent_action(pid_t child_pid) {
                 uint8_t *buf = malloc(128 * sizeof(uint8_t));
                 struct user_regs_struct check_regs;
                 ret = ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs);
-                LOG("dumping 128 bytes from : %p\n", check_regs.rip);
+                CHECK(ret == -1, "could not getregs!\n");
+                LOG("dumping 128 bytes from : %p\n", (void *)check_regs.rip);
                 read_from_memory(child_pid, buf, check_regs.rip, 128);
                 for (int i = 0; i < 128; i++) {
                     if (i % 8 == 0) fprintf(stderr, "\n");
@@ -473,7 +256,7 @@ void parent_action(pid_t child_pid) {
                 fprintf(stderr, "\n\n");
                 map_list *lst = get_maps_for_pid(child_pid, PERM_RW);
                 uintptr_t stack = get_base_addr_for_page("stack", lst);
-                LOG("dumping 128 bytes from stack: %p\n", stack);
+                LOG("dumping 128 bytes from stack: %p\n", (void *)stack);
                 read_from_memory(child_pid, buf, stack, 128);
                 for (int i = 0; i < 128; i++) {
                     if (i % 8 == 0) fprintf(stderr, "\n");
@@ -512,7 +295,6 @@ void parent_action(pid_t child_pid) {
         }
 
         // resume until next syscall
-        // LOG("boutta PTRACE_SYSCALL\n");
         ret = ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
         CHECK(ret == -1, "failed to ptrace_syscall\n");
     }

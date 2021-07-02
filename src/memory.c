@@ -13,8 +13,6 @@
 #include "util.h"  // LOG, CHECK
 #define CPSIZE (4096 * 2)
 
-#define DEBUG_MEMORY_READS 1
-#define DEBUG_MEMORY_WRITES 0
 ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
                          uint64_t size) {
     struct iovec local = {.iov_base = to, .iov_len = size};
@@ -27,7 +25,7 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
         CHECK(1, "cannot deal with big odd pages\n");
     }
 
-    int count;
+    int count = 0;
     if (size > CPSIZE) {
 #if DEBUG_MEMORY_READS
         LOG("splitting iovecs\n");
@@ -39,7 +37,7 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
         struct iovec *cur;
         for (int i = 0; i < count; i++) {
             cur = &remotes[i];
-            cur->iov_base = (void *)from + CPSIZE * i;
+            cur->iov_base = (void *)(from + CPSIZE * i);
             cur->iov_len = CPSIZE;
 #if DEBUG_MEMORY_READS
             LOG("iovec %d, from %p size %lu\n", i, cur->iov_base, cur->iov_len);
@@ -54,7 +52,8 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
         LOG("iovec, from %p size %lu\n", remotes->iov_base, remotes->iov_len);
 #endif
     }
-
+    CHECK(count == 0, "no read iovecs?\n");
+    // NOLINTNEXTLINE(clang-analyzer-unix.Malloc)
     ssize_t ret = process_vm_readv(pid,      // pid
                                    &local,   // local iovec
                                    1,        // liovcnt -> local iovec count
@@ -92,8 +91,8 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
     // CHECK(memcmp(ptrace_buf, to, size) != 0, "buffer mismatch!\n");
     memcpy(to, ptrace_buf, size);
 #endif
-    LOG("readv returned %d\n", ret);
-    if (ret < size) {
+    LOG("readv returned %" PRId64 "\n", ret);
+    if (ret < (ssize_t)size) {
         LOG("re-calling read_from_memory with remaining unread bytes %lu\n",
             size - ret);
         ret +=
@@ -117,7 +116,7 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
         CHECK(1, "cannot deal with big odd pages\n");
     }
 
-    int count;
+    int count = 0;
     if (size > CPSIZE) {
 #if DEBUG_MEMORY_WRITES
         LOG("splitting iovecs\n");
@@ -130,7 +129,7 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
         struct iovec *cur;
         for (int i = 0; i < count; i++) {
             cur = &locals[i];
-            cur->iov_base = (void *)what + CPSIZE * i;
+            cur->iov_base = (void *)(what + CPSIZE * i);
             cur->iov_len = CPSIZE;
 
 #if DEBUG_MEMORY_WRITES
@@ -148,7 +147,9 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
         LOG("iovec, what %p size %lu\n", locals->iov_base, locals->iov_len);
 #endif
     }
+    CHECK(count == 0, "no write iovecs?\n");
 
+    // NOLINTNEXTLINE(clang-analyzer-unix.Malloc)
     ssize_t ret = process_vm_writev(pid,      // pid
                                     locals,   // local iovec
                                     count,    // liovcnt -> local iovec count
@@ -163,7 +164,7 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
 #endif
     CHECK(ret == -1, "writev returned -1\n");
 
-    if (ret < size) {
+    if (ret < (ssize_t)size) {
         LOG("re-calling write_to_memory with remaining unread bytes %lu\n",
             size - ret);
         ret += write_to_memory(pid, what + ret, where + ret, size - ret);
