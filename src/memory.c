@@ -91,10 +91,14 @@ ssize_t read_from_memory(pid_t pid, uint8_t *to, uintptr_t from,
     // CHECK(memcmp(ptrace_buf, to, size) != 0, "buffer mismatch!\n");
     memcpy(to, ptrace_buf, size);
 #endif
+#if DEBUG_MEMORY_READS
     LOG("readv returned %" PRId64 "\n", ret);
+#endif
     if (ret < (ssize_t)size) {
+#if DEBUG_MEMORY_READS
         LOG("re-calling read_from_memory with remaining unread bytes %lu\n",
             size - ret);
+#endif
         ret +=
             read_from_memory(pid, to + ret, from + ret, (uint64_t)size - ret);
         // return size;
@@ -165,8 +169,10 @@ ssize_t write_to_memory(pid_t pid, uint8_t *what, uintptr_t where,
     CHECK(ret == -1, "writev returned -1\n");
 
     if (ret < (ssize_t)size) {
+#if DEBUG_MEMORY_WRITES
         LOG("re-calling write_to_memory with remaining unread bytes %lu\n",
             size - ret);
+#endif
         ret += write_to_memory(pid, what + ret, where + ret, size - ret);
     }
     CHECK(ret == -1, "writev returned -1\n");

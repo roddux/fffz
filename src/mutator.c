@@ -27,7 +27,9 @@ void print_bits(uint8_t *buf, uint64_t num_bits) {
 }
 
 void bitflip(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
     LOG("a single bitflip!\n");
+#endif
     uint64_t offset = (rand() * 1024) % size;
     uint8_t flip = 0;
     flip = 1 << (rand() % 7);
@@ -35,13 +37,17 @@ void bitflip(uint8_t *buf, uint64_t size) {
 }
 
 void byteflip(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
     LOG("a single byteflip!\n");
+#endif
     uint64_t offset = (rand() * 1024) % size;
     buf[offset] = ~buf[offset];
 }
 
 void arith(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
     LOG("a single arithmetic!\n");
+#endif
     uint64_t offset = (rand() * 1024) % size;
     // "[..] -35 to +35. Past these bounds, yields drop dramatically [..]"
     int8_t adjust = rand() % 36;
@@ -89,7 +95,9 @@ void mutate(uint8_t *buf, uint64_t size, ...) {
     va_end(list);
     if (num_rounds == 0) num_rounds++;
 
+#if DEBUG_MUTATIONS
     LOG("mutating buffer at addr %p of size %" PRIu64 " for %d round%s\n", buf,
         size, num_rounds, num_rounds > 1 ? "s" : "");
+#endif
     do_mutate(buf, size, num_rounds);
 }

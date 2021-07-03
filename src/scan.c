@@ -15,13 +15,17 @@
 // it breaks -- which is why we use strtok
 
 uint8_t *open_and_read_file(char *filename) {
+#if DEBUG_SCANNER
     LOG("opening file %s\n", filename);
+#endif
     FILE *map_stream = fopen(filename, "r");
 
     int c;
     size_t filesz = 10240, i = 0, mult = 1;
 
+#if DEBUG_SCANNER
     LOG("allocating memory to read map file\n");
+#endif
     uint8_t *filebuf = malloc(sizeof(uint8_t) * filesz);
     CHECK(filebuf == NULL, "could not malloc\n");
     // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
@@ -32,7 +36,9 @@ uint8_t *open_and_read_file(char *filename) {
     CHECK(c == NULL || c == EOF, "error fgetc()\n");
     while (c != EOF && c != NULL) {
         if (i == filesz) {  // resize buffer if needed
+#if DEBUG_SCANNER
             LOG("resizing file\n");
+#endif
             size_t newfilesz = filesz * ++mult;  // NOLINT
             filebuf = realloc(filebuf, newfilesz);
             // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)

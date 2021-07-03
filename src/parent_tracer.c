@@ -36,18 +36,21 @@ char *file_name = NULL;
 int16_t file_fd = -1;
 uintptr_t buffer_addr;
 
+uint8_t restores = 0;
+
 extern process_snapshot *snap;  // TODO: separate
 void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     uint8_t reason) {
     char tmp_path[256];
+    struct user_regs_struct check_regs;
+    int ret;
     if (reason == PTRACE_SYSCALL_INFO_ENTRY) {
         last_syscall = syzinfo->entry.nr;
         switch (last_syscall) {
             case __NR_exit:
             case __NR_exit_group:
                 LOG("caught exit/exit_group! b0rking syscall\n");
-                struct user_regs_struct check_regs;
-                int ret = ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs);
+                ret = ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs);
                 CHECK(ret == -1, "failed to check registers\n");
                 check_regs.orig_rax = -1;
                 // check_regs.rax = -1;
@@ -55,7 +58,10 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 CHECK(ret == -1, "failed to set registers\n");
                 break;
             case __NR_openat:
+                //                print_syscall(syzinfo);
                 // TODO: make sure we don't read unmapped/non-readable memory
+                /*                LOG("caught openat, reading name at %p\n",
+                                    (void *)syzinfo->entry.args[1]);*/
                 read_from_memory(child_pid, (uint8_t *)&tmp_path,
                                  syzinfo->entry.args[1], 256);  // read path
                 tmp_path[strnlen(tmp_path, 256)] = 0;
@@ -64,6 +70,50 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                         if (file_name == NULL) {
                             file_name = strdup(tmp_path);
                             LOG("found target file: '%s'\n", file_name);
+
+                            if (snap != NULL) break;
+                            LOG("about to save snapshot just before open() on "
+                                "target file\n");
+
+                            ret = ptrace(PTRACE_GETREGS, child_pid, NULL,
+                                         &check_regs);
+                            CHECK(ret == -1, "failed to check registers\n");
+                            LOG("current RIP: %p\n", (void *)check_regs.rip);
+                            // dump bytes
+                            uint8_t *buf = malloc(128 * sizeof(uint8_t));
+                            ret = ptrace(PTRACE_GETREGS, child_pid, NULL,
+                                         &check_regs);
+                            CHECK(ret == -1, "could not getregs!\n");
+
+#if 0
+                            LOG("dumping 128 bytes from : %p\n",
+                                (void *)check_regs.rip);
+                            read_from_memory(child_pid, buf, check_regs.rip,
+                                             128);
+                            for (int i = 0; i < 128; i++) {
+                                if (i % 8 == 0) fprintf(stderr, "\n");
+                                fprintf(stderr, "0x%02x ", buf[i]);
+                            }
+                            fprintf(stderr, "\n\n");
+#endif
+                            check_regs.rip = check_regs.rip - 12;
+                            LOG("saved RIP: %p\n", (void *)check_regs.rip);
+// dump bytes
+#if 0
+                            LOG("dumping 128 bytes from : %p\n",
+                                (void *)check_regs.rip);
+                            read_from_memory(child_pid, buf, check_regs.rip,
+                                             128);
+                            for (int i = 0; i < 128; i++) {
+                                if (i % 8 == 0) fprintf(stderr, "\n");
+                                fprintf(stderr, "0x%02x ", buf[i]);
+                            }
+                            fprintf(stderr, "\n\n");
+#endif
+                            save_snapshot(child_pid);
+                            snap->regs.rip =
+                                snap->regs.rip - 12;  // MAGIC OFFSETS
+
                         } else {
                             LOG("dupe openat() on target file?\n");
                         }
@@ -71,6 +121,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 }
                 // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
                 memset(&tmp_path, 0, 256);
+
                 break;
             case __NR_read:
                 if (file_fd != -1 &&
@@ -88,7 +139,7 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                 break;
             case __NR_lseek:
                 // CHECK(1, "fffz does not support programs that seek()\n");
-                print_syscall(syzinfo);
+                //                print_syscall(syzinfo);
                 break;
         }
     }
@@ -97,20 +148,20 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
         if (last_syscall == __NR_exit || last_syscall == __NR_exit_group) {
             // TODO: this needs a serious code tidy, most of this should live in
             // snapshot.c tbh
+            CHECK(snap == NULL, "CANNOT RESTORE BLANK SNAPSHOT\n");
+            //            CHECK(restores++ == 2, "5 restores is ya lot\n");
 
             int status;
-            LOG("about to call restore_heap_size in child proc...\n");
+            LOG("calling restore_heap_size in child proc...\n");
             map_list *lst = get_maps_for_pid(child_pid, PERM_X);
             uintptr_t base_address = get_base_addr_for_page("imposer.so", lst);
             free(lst);
             struct user_regs_struct check_regs;
             uintptr_t x = base_address + _restore_heap_size_function_address -
                           _base_address_offset;
-            LOG("boutta getregs\n");
             CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
             check_regs.rip = x;
             check_regs.rdi = snap->original_heap_size;
-            LOG("aboutta setregs\n");
             CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
 
             // continue until we hit the int3 in interposer
@@ -148,10 +199,8 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
             x = base_address + _restore_offsets_function_address -
                 _base_address_offset;
-            LOG("boutta getregs\n");
             CHECKP(ptrace(PTRACE_GETREGS, child_pid, NULL, &check_regs) == -1);
             check_regs.rip = x;
-            LOG("aboutta setregs\n");
             CHECKP(ptrace(PTRACE_SETREGS, child_pid, NULL, &check_regs) == -1);
 
             // continue until we hit the int3 in interposer
@@ -172,25 +221,27 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
                     strsignal(WSTOPSIG(status)));
             }
 
-            LOG("back in control!\n");
+            LOG("injected functions done, now restoring saved registers\n");
 
             restore_snapshot(child_pid, RESTORE_MEMORY);
 
+            // snap->regs.rip = snap->regs.rip - 12;  // MAGIC OFFSETS
+
             restore_snapshot(child_pid,
                              RESTORE_REGISTERS);  // restore RIP back from our
-                                                  // injected function
+// injected function
+#if 0
+            uint8_t *buf = malloc(128);
+            LOG("dumping 128 bytes from : %p\n", (void *)snap->regs.rip);
+            read_from_memory(child_pid, buf, snap->regs.rip, 128);
+            for (int i = 0; i < 128; i++) {
+                if (i % 8 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "0x%02x ", buf[i]);
+            }
+            fprintf(stderr, "\n\n");
+#endif
 
             LOG("snapshot restored\n");
-#if 0
-            LOG("corrupting saved memory buffer (%p)\n", (void *)buffer_addr);
-            free(current_testcase);
-            current_testcase = malloc(_full_fsz * sizeof(uint8_t));
-            read_from_memory(child_pid, current_testcase, buffer_addr,
-                             _full_fsz);
-            mutate(current_testcase, _full_fsz, 2);
-            write_to_memory(child_pid, (uint8_t *)current_testcase, buffer_addr,
-                            _full_fsz);
-#endif
         }
         if (last_syscall == __NR_openat) {
             if (file_name != NULL) {
@@ -203,12 +254,18 @@ void handle_syscall(struct ptrace_syscall_info *syzinfo, pid_t child_pid,
             if (file_fd != -1 && file_name != NULL) {
                 LOG("read(%s) returned %" PRIu64 "\n", file_name, rval);
 
-                // check if we've read the full file
-                if (have_snapshot() == NO_SNAPSHOT &&
-                    have_read_full_filesize(file_name, rval) == FILE_FINISHED) {
-                    save_snapshot(child_pid);
-                    // dump_snapshot_info();
-                }
+                if (rval == 0) return;
+#if 1
+                LOG("corrupting saved memory buffer (%p)\n",
+                    (void *)buffer_addr);
+                free(current_testcase);
+                current_testcase = malloc(rval * sizeof(uint8_t));
+                read_from_memory(child_pid, current_testcase, buffer_addr,
+                                 rval);
+                mutate(current_testcase, rval, 1);
+                write_to_memory(child_pid, (uint8_t *)current_testcase,
+                                buffer_addr, rval);
+#endif
             }
         }
     }
@@ -242,6 +299,7 @@ void parent_action(pid_t child_pid) {
             if (WSTOPSIG(status) == 11) {
                 LOG("SEGFAULT!\n");
 
+#if 0
                 // ...
                 uint8_t *buf = malloc(128 * sizeof(uint8_t));
                 struct user_regs_struct check_regs;
@@ -263,10 +321,14 @@ void parent_action(pid_t child_pid) {
                     fprintf(stderr, "0x%02x ", buf[i]);
                 }
 
+#if 0  // probs better off with a coredump
                 LOG("dumping file data to output file 'out.bin'\n");
                 FILE *fp = fopen("out.bin", "w");
                 fwrite(current_testcase, 1, _full_fsz, fp);
                 fclose(fp);
+#endif
+
+#endif
                 break;
             }
 

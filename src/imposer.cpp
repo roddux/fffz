@@ -14,7 +14,7 @@ ptrace to call restore_offsets and fix checkpointing for programs that seek()
 during operation and break when we restore a checkpoint on 'em.
 */
 
-#define DEBUG_IMPOSER 1
+#define DEBUG_IMPOSER 0
 
 using namespace std;
 std::map<int, uint64_t> fdmap;
@@ -64,7 +64,9 @@ extern "C" void restore_heap_size(uint64_t restore_size) {
     fprintf(stderr, "size is currently %p\n", (void *)cur_size);
 #endif
     if (restore_size < cur_size) {
+#if DEBUG_IMPOSER
         fprintf(stderr, "shrinking brk, zeroing old heap\n");
+#endif
         //        memset((void*)cur_size, 0, cur_size-restore_size);
     }
     int ret = brk((void *)restore_size);
