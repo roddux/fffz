@@ -1,5 +1,6 @@
 #include <dlfcn.h>     // dlsym
 #include <inttypes.h>  // PRIxXX
+#include <malloc.h>    // mallopt
 #include <stdint.h>    // uintX_t
 #include <stdio.h>     // printf/puts
 #include <string.h>    // memset
@@ -22,9 +23,7 @@ off_t (*original_lseek)(int, off_t, int);
 
 // i cba to hashtable in C
 extern "C" void store_seek_for_fd(int fd, uint64_t seek) { fdmap[fd] = seek; }
-
 extern "C" uint64_t get_seek_for_fd(int fd) { return fdmap[fd]; }
-
 extern "C" off_t lseek(int filedes, off_t offset, int whence) {
 #if DEBUG_IMPOSER
     fprintf(stderr, "imposer caught an lseek(fd:%d, off:%lu)\n", filedes,
@@ -35,6 +34,20 @@ extern "C" off_t lseek(int filedes, off_t offset, int whence) {
     off_t returned_offset = (*original_lseek)(filedes, offset, whence);
     store_seek_for_fd(filedes, returned_offset);
     return returned_offset;
+}
+
+extern "C" void __attribute__((constructor)) no_mmap() {
+    int ret = mallopt(M_MMAP_THRESHOLD, 4294967296);
+    if (ret == 0) {
+        fprintf(stderr, "failed to mallopt threshold!\n");
+    }
+    ret = mallopt(M_MMAP_MAX, 0);
+    if (ret == 0) {
+        fprintf(stderr, "failed to mallopt mmap_max!\n");
+    }
+#if DEBUG_IMPOSER
+    fprintf(stderr, "iMPOSER called mallopt\n");
+#endif
 }
 
 extern "C" void restore_offsets() {
@@ -52,11 +65,8 @@ extern "C" void restore_offsets() {
         it++;
     }
     __asm__("int $3");  // throw a TRAP here to save time with ptrace
-    fprintf(stderr, "you should never have come here..!\n");
 }
 
-// we need this 'cuz some programs SHRINK the heap size after they've started
-// cough cough, objdump
 extern "C" void restore_heap_size(uint64_t restore_size) {
     uint64_t cur_size = (uint64_t)sbrk(0);
 #if DEBUG_IMPOSER
@@ -81,8 +91,7 @@ extern "C" void restore_heap_size(uint64_t restore_size) {
 #endif
         //        memset((void*)cur_size, 0, restore_size-cur_size);
     }
-    __asm__("int $3");
-    fprintf(stderr, "stop right there, criminal scum\n");
+    __asm__("int $3");  // throw a TRAP here to save time with ptrace
 }
 
 // TODO: dup2() on all filedescriptors to /dev/null, to silence program output?

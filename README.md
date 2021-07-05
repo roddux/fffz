@@ -53,11 +53,6 @@ We restore the snapshot on `exit()`/`exit_group()` syscalls by using
 ./imposer.cpp     : injected library providing hooks to help with snapshots
 ```
 
-it might be easier to fuzz on every read() to the target file... we could copy
-each read() to our own buffer, to be able to save the testcase off after?
-
-would have to put the first snapshot at the start of the first read.
-
 # TODO
 ```text
 MVP:
@@ -77,8 +72,10 @@ MVP:
 [X] - rearchitect to snapshot at first open() of target file
 [X] - ensure fffz works with unzip, objdump and ffmpeg
 [X] - catch SIGTERM in parent to cleanly kill target
-[ ] - batch process_vm_readv/process_vm_writev calls
+[X] - batch process_vm_readv/process_vm_writev calls
 [ ] - modify snapshotting to only restore dirty pages
+[ ] - intercept reads() to a memory buffer using PTRACE_SYSEMU
+[ ] - fuzz the whole file at once rather than on-read
 [ ] - massive code-tidy, make logging more consistent
 
 FUTURE:

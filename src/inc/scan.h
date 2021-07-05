@@ -1,6 +1,10 @@
 #include <inttypes.h>   // uintx_t
 #include <sys/types.h>  // pid
 
+#define DESTROY_LIST(X) \
+    free(X->entries);   \
+    free(X);
+
 typedef struct map_entry {
     uintptr_t start;
     uintptr_t end;
@@ -26,10 +30,13 @@ void print_list(map_list *lst);
 #define PERM_W 2   // 0b0000010
 #define PERM_X 4   // 0b0000100
 #define PERM_RW 3  // 0b0000011
-#if 0
-#define IS_READABLE(X) (X->perms[0] == 'r')
-#define IS_WRITEABLE(X) (X->perms[1] == 'w')
-#endif
-map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS);
 
+map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS);
 uintptr_t get_base_addr_for_page(char *page, map_list *lst);
+void clear_refs_for_pid(pid_t pid);
+struct addr_info *get_path_for_addr_from_list(uintptr_t addr, map_list *lst);
+
+struct addr_info {
+    uint8_t *name;
+    uint64_t offset;
+};

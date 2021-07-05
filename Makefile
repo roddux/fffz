@@ -10,12 +10,14 @@ release: DEBUG_RELEASE_FLAGS=-O3
 release: all
 
 imposer:
-	mkdir bin || true
+	mkdir obj &>/dev/null || true
+	mkdir bin &>/dev/null || true
 	g++ -shared src/imposer.cpp -o bin/imposer.so -ldl -fPIC
 	make offset_header
 
 objects:
 	make imposer
+	mkdir obj &>/dev/null || true
 	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/scan.o ./src/scan.c
 	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/parent_tracer.o ./src/parent_tracer.c
 	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/child_tracee.o ./src/child_tracee.c
@@ -26,21 +28,19 @@ objects:
 	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/util.o ./src/util.c
 	$(CC) $(CFLAGS) -c -I ./src/inc -I ./gen -o ./obj/fffz.o ./src/fffz.c
 
-offset_header: # header_offset creates gen directory
+offset_header: # must be called after make objects, the script creates the output directory
 	$(shell ./scripts/header_offset.sh)
 
 fffz:
 	make objects
-	mkdir bin || true
+	mkdir bin &>/dev/null || true
 	$(CC) $(CFLAGS) -I ./inc -I ./gen -o ./bin/fffz ./obj/*.o
 
 target:
-	mkdir bin || true
+	mkdir bin &>/dev/null || true
 	$(CC) $(CFLAGS) -I ./inc -I ./gen -o ./bin/target -ldl ./src/target.c
 
 all:
-	mkdir obj || true
-	make format
 	make fffz
 	make target
 

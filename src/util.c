@@ -114,39 +114,6 @@ int have_read_full_filesize(char *file_name, size_t bytes_read) {
     return FILE_NOT_FINISHED;
 }
 
-void parent_debug_regs_singlestep(pid_t pid, uint64_t steps) {
-    struct user_regs_struct check_regs;
-    for (uint64_t _ = 0; _ < steps; _++) {
-        int ret = ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL);
-        CHECK(ret == -1, "failed to singlestep\n");
-        int status;
-        waitpid(pid, &status, 0);
-
-        if (WIFEXITED(status)) {
-            LOG("Exit status %d\n", WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            LOG("Terminated by signal %d (%s)%s\n", WTERMSIG(status),
-                strsignal(WTERMSIG(status)),
-                WCOREDUMP(status) ? " (core dumped)" : "");
-        } else if (WIFCONTINUED(status)) {
-            LOG("Continued\n");
-        } else if (WIFSTOPPED(status)) {
-            LOG("Stopped by signal %d (%s)\n", WSTOPSIG(status),
-                strsignal(WSTOPSIG(status)));
-        }
-
-        if (WIFSTOPPED(status)) {
-            ret = ptrace(PTRACE_GETREGS, pid, NULL, &check_regs);
-            CHECK(ret == -1, "failed to check registers\n");
-            // userland: %rdi, %rsi, %rdx, %rcx, %r8 and %r9
-            //   kernel: %rdi, %rsi, %rdx, %r10, %r8 and %r9
-            LOG("step %" PRIu64 ": rip=%p\n", _, (void *)check_regs.rip);
-        } else {
-            CHECK(1, "oops\n");
-        }
-    }
-}
-
 char bad_paths[BLACKLIST_LENGTH][7] = {
     "/dev\0\0\0", "/etc\0\0\0", "/usr\0\0\0",
     "/sys\0\0\0", "/proc\0\0",  "pipe:[\0",

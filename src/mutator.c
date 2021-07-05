@@ -36,12 +36,60 @@ void bitflip(uint8_t *buf, uint64_t size) {
     buf[offset] = buf[offset] ^ flip;
 }
 
+void bitflip_march(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
+    LOG("marching bitflip!\n");
+#endif
+    uint8_t march = rand() % 16;
+    uint64_t offset = (rand() * 1024) % size;
+    for (int i = 0; i < march; i++) {
+        if (offset + march >= size) break;
+        uint8_t flip = 1 << (rand() % 7);
+        buf[offset] = buf[offset] ^ flip;
+        offset += march;
+    }
+}
+
 void byteflip(uint8_t *buf, uint64_t size) {
 #if DEBUG_MUTATIONS
     LOG("a single byteflip!\n");
 #endif
     uint64_t offset = (rand() * 1024) % size;
     buf[offset] = ~buf[offset];
+}
+
+void byteflip_march(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
+    LOG("marching byteflip!\n");
+#endif
+    uint8_t march = rand() % 16;
+    uint64_t offset = (rand() * 1024) % size;
+    for (int i = 0; i < march; i++) {
+        if (offset + march >= size) break;
+        buf[offset] = ~buf[offset];
+        offset += march;
+    }
+}
+
+void replace_byte(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
+    LOG("a single replace byte!\n");
+#endif
+    uint64_t offset = (rand() * 1024) % size;
+    buf[offset] = (uint8_t)rand();
+}
+
+void replace_byte_march(uint8_t *buf, uint64_t size) {
+#if DEBUG_MUTATIONS
+    LOG("replace byte march!\n");
+#endif
+    uint8_t march = rand() % 16;
+    uint64_t offset = (rand() * 1024) % size;
+    for (int i = 0; i < march; i++) {
+        if (offset + march >= size) break;
+        buf[offset] = (uint8_t)rand();
+        offset += march;
+    }
 }
 
 void arith(uint8_t *buf, uint64_t size) {
@@ -69,11 +117,10 @@ void arith(uint8_t *buf, uint64_t size) {
     }
 }
 
-#define MUTATOR_FN_COUNT 3
+#define MUTATOR_FN_COUNT 7
 void (*mutators[])(uint8_t *, uint64_t) = {
-    bitflip,
-    byteflip,
-    arith,
+    bitflip, bitflip_march, byteflip,           byteflip_march,
+    arith,   replace_byte,  replace_byte_march,
 };
 
 void do_mutate(uint8_t *buf, uint64_t size, uint8_t num_rounds) {

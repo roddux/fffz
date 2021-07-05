@@ -60,5 +60,4 @@ extern int g_argc;
 void print_syscall(struct ptrace_syscall_info *syzinfo);
 int path_matches_arguments(char *path);
 int have_read_full_filesize(char *file_name, size_t bytes_read);
-void parent_debug_regs_singlestep(pid_t pid, uint64_t steps);
 int is_path_blacklisted(char *path);

@@ -1,6 +1,6 @@
 #!/bin/sh	
 # forget trying to do this in a Makefile
-mkdir gen || true
+mkdir gen &>/dev/null || true
 
 # incl
 echo "#include <stdint.h>" > gen/imposer_offset_header.h
