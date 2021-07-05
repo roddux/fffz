@@ -74,14 +74,14 @@ MVP:
 [X] - allow read_from/write_to_memory to operate on larger memory regions
 [X] - modify proc/pid/map scanner to only return readable/writeable pages
 [X] - call library to restore original pre-snapshot heap size
-[>] - rearchitect to snapshot at start of first read() from target file
-[ ] - ensure fffz works with unzip, objdump, imagemagick and ffmpeg
-[ ] - massive code-tidy, make logging more consistent
-[ ] - catch SIGTERM in parent to cleanly kill target
-
-FUTURE:
+[X] - rearchitect to snapshot at first open() of target file
+[X] - ensure fffz works with unzip, objdump and ffmpeg
+[X] - catch SIGTERM in parent to cleanly kill target
 [ ] - batch process_vm_readv/process_vm_writev calls
 [ ] - modify snapshotting to only restore dirty pages
+[ ] - massive code-tidy, make logging more consistent
+
+FUTURE:
 [ ] - collect edge/basic-block coverage information from target process
 [ ] - handle reads in userspace with PTRACE_SYSEMU for fewer context switches?
 [ ] - hook fstat so we can provide the target a buffer of arbitrary size

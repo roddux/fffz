@@ -1,6 +1,7 @@
 #define __SRCFILE__ "fffz"
 #include <errno.h>
 #include <inttypes.h>
+#include <signal.h>  // kill
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,12 +20,25 @@ extern char signal_names[][14];
 char **g_argv;
 int g_argc;
 
+pid_t new_pid;
+static void exit_cleanly(int signum) {
+    LOG("received signal %d, quitting\n", signum);
+    kill(new_pid, 9);  // sigkill the process
+}
+
 void fork_and_trace(char **proc) {
-    pid_t new_pid = fork();
+    new_pid = fork();
     CHECK(new_pid == -1, "failed to fork()\n");
     if (new_pid == 0) {  // child
         child_main(proc);
     } else {  // parent
+        struct sigaction sa;
+        sa.sa_handler = exit_cleanly;
+        sigemptyset(&sa.sa_mask);
+        CHECK(sigaction(SIGINT, &sa, NULL) == -1,
+              "failed to sigaction(sigint)\n");
+        CHECK(sigaction(SIGTERM, &sa, NULL) == -1,
+              "failed to sigaction(sigterm)\n");
         parent_action(new_pid);
     }
 }
