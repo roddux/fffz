@@ -14,6 +14,7 @@
 #include <syscall.h>
 #include <unistd.h>
 
+// TODO: replace syscall_names with strsignal() and remove syscalls.c
 void print_syscall(struct ptrace_syscall_info *syzinfo) {
     char argz[512];
     switch (syzinfo->entry.nr) {
