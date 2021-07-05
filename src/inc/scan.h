@@ -4,9 +4,15 @@
 typedef struct map_entry {
     uintptr_t start;
     uintptr_t end;
-    char perms[6];  // Read, Write, eXecute, Shared, Private
-    char offset[9];
-    char path[256];
+    uint8_t read;
+    uint8_t write;
+    uint8_t exec;
+    uint8_t priv;
+    uint64_t offset;
+    uint8_t dev_major;
+    uint8_t dev_minor;
+    uint64_t inode;
+    uint8_t path[1024];
 } map_entry;
 
 typedef struct map_list {

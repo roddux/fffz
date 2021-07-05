@@ -3,6 +3,7 @@
 
 #include <fcntl.h>      // O_RDONLY
 #include <inttypes.h>   // PRIx64
+#include <stdint.h>     // uintx_t
 #include <stdio.h>      // printf
 #include <stdlib.h>     // malloc, realloc
 #include <string.h>     // strchr, strtok
@@ -11,56 +12,34 @@
 
 #include "util.h"
 
-// fscanf doesn't deal with optional fields; if we scan a line without a path,
-// it breaks -- which is why we use strtok
+// man procfs, /proc/[pid]/pagemap
+// TODO: use bitfields
+#define PRESENT_IN_RAM (1L << 63)
+#define PRESENT_IN_SWAP (1L << 62)
+#define FILEMAP_ANON (1L << 61)
+#define EXCLUSIVE_MAP (1L << 56)
+#define SOFT_DIRTY (1L << 55)
 
-uint8_t *open_and_read_file(char *filename) {
-#if DEBUG_SCANNER
-    LOG("opening file %s\n", filename);
-#endif
-    FILE *map_stream = fopen(filename, "r");
-
-    int c;
-    size_t filesz = 10240, i = 0, mult = 1;
-
-#if DEBUG_SCANNER
-    LOG("allocating memory to read map file\n");
-#endif
-    uint8_t *filebuf = malloc(sizeof(uint8_t) * filesz);
-    CHECK(filebuf == NULL, "could not malloc\n");
-    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
-    memset(filebuf, 0, filesz);
-
-    // fstat/fseek doesn't work on /proc/X/maps, so we go byte-by-byte
-    c = fgetc(map_stream);
-    CHECK(c == NULL || c == EOF, "error fgetc()\n");
-    while (c != EOF && c != NULL) {
-        if (i == filesz) {  // resize buffer if needed
-#if DEBUG_SCANNER
-            LOG("resizing file\n");
-#endif
-            size_t newfilesz = filesz * ++mult;  // NOLINT
-            filebuf = realloc(filebuf, newfilesz);
-            // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
-            memset(filebuf + filesz, 0, newfilesz - filesz);
-            filesz = newfilesz;
-        }
-        filebuf[i++] = c;
-        c = fgetc(map_stream);
+#if 0
+void print_byte_as_bits(char val) {
+    for (int i = 7; 0 <= i; i--) {
+        printf("%c", (val & (1 << i)) ? '1' : '0');
     }
-    fclose(map_stream);
-    return filebuf;
 }
-
-size_t count_entries(uint8_t *buf) {
-    char *myp = (char *)buf;
-    int entries = 0;  // expecting something 10->2000 range
-    while ((myp = strchr(myp, '\n')) != NULL) {
-        myp++;
-        entries++;
+void print_bits(char *ty, char *val, unsigned char *bytes, size_t num_bytes) {
+    printf("%*s = [ ", 15, val);
+    for (size_t i = 0; i < num_bytes; i++) {
+        print_byte_as_bits(bytes[i]);
+        printf(" ");
     }
-    return entries;
+    printf("]\n");
 }
+#define SHOW(T, V)                                          \
+    do {                                                    \
+        T x = V;                                            \
+        print_bits(#T, #V, (unsigned char *)&x, sizeof(x)); \
+    } while (0)
+#endif
 
 void print_list(map_list *lst) {
     map_entry *entry_list = lst->entries;
@@ -68,60 +47,66 @@ void print_list(map_list *lst) {
     printf("list->len: %lu\n", lst->len);
     for (size_t j = 0; j < lst->len; j++) {
         cur = &entry_list[j];
-        printf("Entry %lu: '%s' with perms '%s' from %" PRIx64 " to %" PRIx64
-               "\n",
-               j, cur->path, cur->perms, cur->start, cur->end);
+        printf("%03lu: %24s - %c%c%c%c : %" PRIx64 " - %" PRIx64 "\n", j,
+               cur->path, cur->read, cur->write, cur->exec, cur->priv,
+               cur->start, cur->end);
     }
 }
 
-map_entry *parse_buffer_to_entry_list(uint8_t *buf, size_t entries) {
-    CHECK(entries == 0, "error parsing list\n")
-    map_entry *entry_list = malloc(sizeof(map_entry) * entries);
-    char *by_newline, *by_space;
-    char *segment;
+map_list *get_map_list_from_proc(uint8_t *filename) {
+#if DEBUG_SCANNER
+    LOG("opening file %s\n", filename);
+#endif
+    FILE *map_stream = fopen(filename, "r");
 
-    int iter = 0;
-    int cur_seg;
+    uint8_t guessed_entries = 1000;
+    map_entry *entry_list = malloc(sizeof(map_entry) * guessed_entries);
 
-    char *line = strtok_r((char *)buf, "\n", &by_newline);
-    while (line != NULL) {
-        cur_seg = 0;
-        segment = strtok_r(line, " ", &by_space);
-        map_entry *cur_entry = malloc(sizeof(map_entry));
-        while (segment != NULL) {
-            switch (cur_seg) {
-                case 0:  // address
-                    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
-                    sscanf(segment, "%" PRIx64 "-%" PRIx64, &cur_entry->start,
-                           &cur_entry->end);
-                    break;
-                case 1:  // perms
-                    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-                    strcpy((char *)&cur_entry->perms, segment);
-                    break;
-                case 2:  // offset
-                    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-                    strcpy((char *)&cur_entry->offset, segment);
-                    break;
-                case 5:  // pathname
-                    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.strcpy)
-                    strcpy((char *)&cur_entry->path, segment);
-                    break;
-            }
-            cur_seg++;
-            segment = strtok_r(NULL, " ", &by_space);
+    int count;
+    for (count = 0;; count++) {
+        map_entry *cur = malloc(sizeof(map_entry));
+
+        int ret = fscanf(map_stream,
+                         "%" PRIx64 "-%" PRIx64 " %c%c%c%c %" PRIx64
+                         " %d:%d %" PRIu64 "",
+                         &cur->start, &cur->end, &cur->read, &cur->write,
+                         &cur->exec, &cur->priv, &cur->offset, &cur->dev_major,
+                         &cur->dev_minor, &cur->inode);
+        if (ret == EOF) break;
+
+        // peek next 2 characters, to see if we can scanf() the path
+        fgetc(map_stream);
+        int check = fgetc(map_stream);
+        fseek(map_stream, -2, SEEK_CUR);
+        if (check != '\n') {
+            ret = fscanf(map_stream, "%s", &cur->path);
+            CHECK(ret != 1, "failed to scan path\n");
+        } else {
+            strcpy(&cur->path, "");
         }
-        line = strtok_r(NULL, "\n", &by_newline);
-        CHECK(cur_seg == 0, "broken scanner?\n");
-        entry_list[iter++] = *cur_entry;
+        entry_list[count] = *cur;
+#if DEBUG_SCANNER
+        LOG("%03d: %016" PRIx64 "-%016" PRIx64 " %c%c%c%c %08" PRIx64
+            " %02d:%02d %9" PRIu64 " %s\n",
+            count, cur->start, cur->end, cur->read, cur->write, cur->exec,
+            cur->priv, cur->offset, cur->dev_major, cur->dev_minor, cur->inode,
+            cur->path);
+#endif
     }
-    return entry_list;
+    entry_list = realloc(entry_list, sizeof(map_entry) * count);
+    fclose(map_stream);
+
+    map_list *ret = malloc(sizeof(map_list));
+    ret->entries = entry_list;
+    ret->len = count;
+
+    return ret;
 }
 
-int IS_READABLE(map_entry *X) { return (X->perms[0] == 'r'); }
-int IS_WRITEABLE(map_entry *X) { return (X->perms[1] == 'w'); }
+int IS_READABLE(map_entry *X) { return (X->read == 'r'); }
+int IS_WRITEABLE(map_entry *X) { return (X->write == 'w'); }
 int IS_READWRITE(map_entry *X) { return (IS_READABLE(X) && IS_WRITEABLE(X)); }
-int IS_EXECUTABLE(map_entry *X) { return (X->perms[2] == 'x'); }
+int IS_EXECUTABLE(map_entry *X) { return (X->exec == 'x'); }
 
 map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     // cat /proc/sys/kernel/pid_max == 4194304 == len(7)
@@ -129,27 +114,14 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
     char map_path[19];
     // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
     sprintf((char *)&map_path, "/proc/%d/maps", pid);
-    uint8_t *filebuf = open_and_read_file(map_path);
-    size_t len = count_entries(filebuf);
-    CHECK(len == 0, "no entries returned from count_entries\n");
     // NOLINTNEXTLINE(clang-analyzer-unix.Malloc)
-    map_entry *entries = parse_buffer_to_entry_list(filebuf, len);
-
-#if DEBUG_SCANNER
-    LOG(" *entries is at %p\n", (void *)entries);
-    LOG("page_options is %d\n", PAGE_OPTIONS);
-#endif
+    map_list *lst = get_map_list_from_proc(map_path);
+    map_entry *entries = lst->entries;
 
     // filter list based on options
     size_t used_len = 0;
-    map_entry *used_entries = malloc(sizeof(map_entry) * len);
-#if DEBUG_SCANNER
-    LOG("*used_entries is at %p\n", (void *)used_entries);
-#endif
-    for (size_t c = 0; c < len; c++) {
-#if DEBUG_SCANNER
-        LOG("checking item %d\n", c);
-#endif
+    map_entry *used_entries = malloc(sizeof(map_entry) * lst->len);
+    for (size_t c = 0; c < lst->len; c++) {
         map_entry *cur, *new;
         cur = &entries[c];
         int (*conditions[])(map_entry *) = {
@@ -169,15 +141,8 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
             cur->perms, cur->path);
 #endif
         new = &used_entries[used_len++];
-#if DEBUG_SCANNER
-        LOG("\ncur: %p\nnew: %p\n", cur, new);
-#endif
         // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
         memcpy(new, cur, sizeof(map_entry));
-#if DEBUG_SCANNER
-        LOG("\nnew->start: %p\nnew->perms: %s\nnew->path: %s\n", new->start,
-            new->perms, new->path);
-#endif
     }
     CHECK(used_len == 0, "no entries in new list?\n");
     used_entries = realloc(used_entries, sizeof(map_entry) * used_len);
@@ -192,7 +157,6 @@ map_list *get_maps_for_pid(pid_t pid, int PAGE_OPTIONS) {
 uintptr_t get_base_addr_for_page(char *page, map_list *lst) {
     map_entry *entry_list = lst->entries;
     map_entry *cur;
-    // print_list(lst);
 #if DEBUG_SCANNER
     LOG("looking for base address of given path: '%s'\n", page);
 #endif
@@ -211,15 +175,93 @@ uintptr_t get_base_addr_for_page(char *page, map_list *lst) {
     return 0;
 }
 
+void clear_refs_for_pid(pid_t pid) {
+    // clear dirty bits
+    int refs = open("/proc/self/clear_refs", O_WRONLY);
+    if (refs == -1) {
+        puts("failed to open clear_refs");
+        perror(0);
+        exit(-1);
+    }
+    uint8_t towrite = '4';
+    int written = write(refs, &towrite, 1);
+    if (written != 1) {
+        puts("failed to clear_refs");
+        printf("wrote %d\n", written);
+        perror(0);
+        exit(-1);
+    }
+}
+
+map_list *get_dirty_pages_from_list(map_list *lst) {
+    // open pagemap
+    int page_fd = open("/proc/self/pagemap", O_RDONLY);
+    if (page_fd == -1) {
+        puts("failed to open pagemap");
+        exit(-1);
+    }
+    puts("Opened pagemap");
+
+    // TODO, just use read()
+    FILE *fd_stream = fdopen(page_fd, "r");
+    if (fd_stream == NULL) {
+        puts("failed to fdopen");
+        exit(-1);
+    }
+
+    size_t dirty_len = 0;
+    map_entry *dirty_list = malloc(sizeof(map_entry) * lst->len);
+
+    map_entry *entry_list = lst->entries;
+    map_entry *cur, *new;
+    for (size_t j = 0; j < lst->len; j++) {
+        cur = &entry_list[j];
+        // get address to seek to
+        printf("page entry: %s\n", cur->path);
+
+        // seek to offset in pagemap
+        uintptr_t seek_offset = (cur->start / 4096) * sizeof(uint64_t);
+
+        // dump data from pagemap file
+        printf("seeking to offset %" PRIu64 " in pagemap\n", seek_offset);
+        int ret = lseek(page_fd, seek_offset, SEEK_SET);
+        if (ret == -1) {
+            puts("failed to seek!");
+            exit(-1);
+        }
+
+        uint64_t data = 0;
+        fread(&data, sizeof(uint64_t), 1, fd_stream);
+        // SHOW(uint64_t, data);
+
+        if ((data & SOFT_DIRTY) > 0) {
+            puts("page is dirty, copying to dirty_list");
+            new = &dirty_list[dirty_len++];
+            memcpy(new, cur, sizeof(map_entry));
+        }
+    }
+
+    map_list *ret = malloc(sizeof(map_list));
+    ret->entries = dirty_list;
+    ret->len = dirty_len;
+    return ret;
+}
+
 #if 0
 int main() {
+    map_list *lst = get_map_list_from_proc("/proc/self/maps");
+    print_list(lst);
+    exit(0);
     pid_t trg = getpid();
-    map_list *list = get_maps_for_pid(trg, PERM_R);
-    print_list(list);
-    free(list);
-    list = get_maps_for_pid(trg, PERM_R | PERM_W);
+    map_list *list = get_maps_for_pid(trg, PERM_R | PERM_W);
     print_list(list);
     get_base_addr_for_page("scan", list);
+    clear_refs_for_pid(trg);
+    map_list *newlist = get_dirty_pages_from_list(list);
+    print_list(newlist);
+    free(list->entries);
     free(list);
+    free(newlist->entries);
+    free(newlist);
 }
 #endif
